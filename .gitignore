@@ -1,0 +1,14 @@
+node_modules/
+.next/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Thumbs.db
+frontend/tsconfig.tsbuildinfo
+
+# Contains real legacy employee and bank-account data; never publish it.
+9.BWPR Salary of September 2026.xlsx
