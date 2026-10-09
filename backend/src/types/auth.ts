@@ -8,6 +8,9 @@ export const permissions = [
   'correction:review:hr', 'leave:read:self', 'leave:read:team', 'leave:read:any',
   'leave:create:self', 'leave:review:manager', 'leave:review:hr', 'leave:configure',
   'user:manage', 'audit:read', 'biometric:manage'
+  , 'employee:type:manage', 'trainee:view', 'trainee:manage', 'trainee:convert',
+  'probation:view', 'probation:evaluate:manager', 'probation:evaluate:hr', 'probation:finalize',
+  'contract:view', 'contract:manage', 'employee:lifecycle:view', 'employee:lifecycle:manage', 'notification:hr:view'
 ] as const;
 export type Permission = (typeof permissions)[number];
 

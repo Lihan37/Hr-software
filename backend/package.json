@@ -13,6 +13,7 @@
     "seed": "tsx src/scripts/seed.ts",
     "import:legacy": "tsx src/scripts/import-legacy-employees.ts",
     "import:legacy:apply": "tsx src/scripts/import-legacy-employees.ts --apply"
+    , "migration:employment-type:report": "tsx src/scripts/report-employment-type-migration.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

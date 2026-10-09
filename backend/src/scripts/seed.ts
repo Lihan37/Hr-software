@@ -7,9 +7,13 @@ import { Employee } from '../modules/employees/employee.model.js';
 import { LeaveLedgerEntry, LeaveRequest, LeaveType } from '../modules/leave/leave.model.js';
 import { Department, Designation } from '../modules/organization/organization.model.js';
 import { User } from '../modules/users/user.model.js';
+import { HrPolicy, TraineeType } from '../modules/employee-lifecycle/lifecycle.model.js';
 
 if (env.NODE_ENV === 'production') throw new Error('Development seed is disabled in production');
 await connectDatabase();
+
+await TraineeType.findOneAndUpdate({ code: 'ADMIN_TRAINEE' }, { name: 'Admin Trainee', code: 'ADMIN_TRAINEE', description: 'Development seed trainee category', isActive: true }, { upsert: true, new: true });
+await HrPolicy.findOneAndUpdate({ key: 'DEFAULT' }, { key: 'DEFAULT', probationDurationMonths: 4, probationEvaluationReminderDays: 7, contractExpiryReminderDays: 30, traineeCompletionReminderDays: 7, timezone: 'Asia/Dhaka' }, { upsert: true, new: true });
 
 const departments = await Promise.all([
   Department.findOneAndUpdate({ code: 'HR' }, { name: 'Human Resources', code: 'HR', active: true }, { upsert: true, new: true }),

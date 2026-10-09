@@ -1,7 +1,8 @@
 import { Schema, model } from 'mongoose';
+import { employmentTypes } from '../employee-lifecycle/lifecycle.model.js';
 
 export const employeeTypes = ['PERMANENT', 'PROBATIONARY', 'CONTRACTUAL', 'CASUAL', 'INTERN', 'TRAINEE', 'UNSPECIFIED'] as const;
-export const employmentStatuses = ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'SEPARATED'] as const;
+export const employmentStatuses = ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'RESIGNED', 'TERMINATED', 'SEPARATED'] as const;
 
 const addressSchema = new Schema({
   line1: String, line2: String, city: String, district: String, postalCode: String, country: { type: String, default: 'Bangladesh' }
@@ -38,8 +39,17 @@ const employeeSchema = new Schema({
     designation: { type: Schema.Types.ObjectId, ref: 'Designation', required: true, index: true },
     grade: String,
     employeeType: { type: String, enum: employeeTypes, required: true },
+    employmentType: { type: String, enum: employmentTypes, index: true },
+    traineeId: { type: String, unique: true, sparse: true, immutable: true },
+    originalTraineeId: { type: String, sparse: true, immutable: true },
+    traineeType: { type: Schema.Types.ObjectId, ref: 'TraineeType', default: null, index: true },
+    traineeStatus: { type: String, enum: ['ACTIVE', 'COMPLETED', 'CONVERTED', 'DROPPED'], default: null },
+    traineeStartDate: Date, expectedCompletionDate: Date, traineeRemarks: String,
     joiningDate: { type: Date, required: true }, confirmationDate: Date,
     probationStartDate: Date, probationEndDate: Date, contractStartDate: Date, contractEndDate: Date,
+    probationEndDateSource: { type: String, enum: ['AUTO_CALCULATED', 'MANUAL_OVERRIDE'] },
+    probationEvaluationStatus: { type: String, enum: ['NOT_STARTED', 'PENDING_MANAGER', 'PENDING_HR', 'PENDING_FINAL', 'COMPLETED'], default: 'NOT_STARTED' },
+    probationCycle: { type: Number, min: 1, default: 1 }, contractNotes: String,
     retirementDate: Date, resignationDate: Date, terminationDate: Date,
     status: { type: String, enum: employmentStatuses, default: 'ACTIVE', index: true },
     reportingManager: { type: Schema.Types.ObjectId, ref: 'Employee', default: null, index: true },

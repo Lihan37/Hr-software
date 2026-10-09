@@ -14,10 +14,11 @@ const steps = ['Basic information', 'Employment', 'Organization', 'Contact & add
 export default function NewEmployeePage() {
   const router = useRouter();
   const [step, setStep] = useState(0);
-  const [refs, setRefs] = useState<{ departments: Ref[]; designations: Ref[] }>({ departments: [], designations: [] });
+  const [refs, setRefs] = useState<{ departments: Ref[]; designations: Ref[]; traineeTypes: Ref[] }>({ departments: [], designations: [], traineeTypes: [] });
+  const [employmentType, setEmploymentType] = useState('PERMANENT');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  useEffect(() => { Promise.all([api.get<Ref[]>('/organization/departments'), api.get<Ref[]>('/organization/designations')]).then(([departments, designations]) => setRefs({ departments, designations })).catch((reason) => setError(reason.message)); }, []);
+  useEffect(() => { Promise.all([api.get<Ref[]>('/organization/departments'), api.get<Ref[]>('/organization/designations'), api.get<Ref[]>('/lifecycle/trainee-types')]).then(([departments, designations, traineeTypes]) => setRefs({ departments, designations, traineeTypes })).catch((reason) => setError(reason.message)); }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -29,7 +30,7 @@ export default function NewEmployeePage() {
         employeeId: form.get('employeeId'), candidateId: form.get('candidateId') || undefined, title: form.get('title') || undefined,
         firstName: form.get('firstName') || undefined, middleName: form.get('middleName') || undefined, lastName: form.get('lastName') || undefined,
         fullName: form.get('fullName'),
-        employment: { department: form.get('department'), designation: form.get('designation'), employeeType: form.get('employeeType'), joiningDate: form.get('joiningDate'), status: 'ACTIVE', location: form.get('location') || undefined, grade: form.get('grade') || undefined },
+        employment: { department: form.get('department'), designation: form.get('designation'), employeeType: employmentType === 'PROBATION' ? 'PROBATIONARY' : employmentType, employmentType, joiningDate: form.get('joiningDate'), status: 'ACTIVE', location: form.get('location') || undefined, grade: form.get('grade') || undefined, traineeType: form.get('traineeType') || undefined, traineeStartDate: form.get('traineeStartDate') || undefined, expectedCompletionDate: form.get('expectedCompletionDate') || undefined, probationStartDate: form.get('probationStartDate') || undefined, probationEndDate: form.get('probationEndDate') || undefined, contractStartDate: form.get('contractStartDate') || undefined, contractEndDate: form.get('contractEndDate') || undefined, contractNotes: form.get('contractNotes') || undefined, confirmationDate: form.get('confirmationDate') || undefined },
       });
       router.push(`/employees/${employee._id}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Employee could not be created'); setSaving(false); }
@@ -41,13 +42,17 @@ export default function NewEmployeePage() {
     <form onSubmit={submit} className="card">
       <div className="border-b border-slate-200 p-5"><h2 className="font-bold">{steps[step]}</h2><p className="mt-1 text-sm text-slate-500">Step {step + 1} of {steps.length}</p></div>
       <div className="grid gap-4 p-5 sm:grid-cols-2">
-        <label><span className="mb-1 block text-sm font-semibold">Employee ID</span><input name="employeeId" required className="field" placeholder="EMP-000001"/></label>
+        <label><span className="mb-1 block text-sm font-semibold">Employee ID</span><input name="employeeId" required={employmentType !== 'TRAINEE'} disabled={employmentType === 'TRAINEE'} className="field disabled:bg-slate-100" placeholder={employmentType === 'TRAINEE' ? 'Generated automatically' : 'EMP-000001'}/></label>
         <label><span className="mb-1 block text-sm font-semibold">Candidate ID</span><input name="candidateId" className="field"/></label>
         <label><span className="mb-1 block text-sm font-semibold">Title</span><input name="title" className="field" placeholder="Mr / Ms / Dr"/></label>
         <label><span className="mb-1 block text-sm font-semibold">Full name</span><input name="fullName" required className="field"/></label>
         <label><span className="mb-1 block text-sm font-semibold">First name</span><input name="firstName" className="field"/></label><label><span className="mb-1 block text-sm font-semibold">Middle name</span><input name="middleName" className="field"/></label><label><span className="mb-1 block text-sm font-semibold">Last name</span><input name="lastName" className="field"/></label>
-        <label><span className="mb-1 block text-sm font-semibold">Employee type</span><select name="employeeType" className="field"><option>PERMANENT</option><option>PROBATIONARY</option><option>CONTRACTUAL</option><option>CASUAL</option><option>INTERN</option><option>TRAINEE</option></select></label>
+        <label><span className="mb-1 block text-sm font-semibold">Employment type</span><select name="employmentType" value={employmentType} onChange={(event) => setEmploymentType(event.target.value)} className="field"><option value="PERMANENT">Permanent</option><option value="PROBATION">Probation</option><option value="CONTRACTUAL">Contractual</option><option value="TRAINEE">Trainee</option></select></label>
         <label><span className="mb-1 block text-sm font-semibold">Joining date</span><input name="joiningDate" type="date" required className="field"/></label>
+        {employmentType === 'TRAINEE' && <><label><span className="mb-1 block text-sm font-semibold">Trainee type</span><select name="traineeType" required className="field"><option value="">Select…</option>{refs.traineeTypes.map((item) => <option key={item._id} value={item._id}>{item.name}</option>)}</select></label><label><span className="mb-1 block text-sm font-semibold">Trainee start date</span><input name="traineeStartDate" type="date" required className="field"/></label><label><span className="mb-1 block text-sm font-semibold">Expected completion</span><input name="expectedCompletionDate" type="date" className="field"/></label></>}
+        {employmentType === 'PROBATION' && <><label><span className="mb-1 block text-sm font-semibold">Probation start</span><input name="probationStartDate" type="date" required className="field"/></label><label><span className="mb-1 block text-sm font-semibold">Probation end override</span><input name="probationEndDate" type="date" className="field"/><span className="mt-1 block text-xs text-slate-500">Leave blank to use the configured duration.</span></label></>}
+        {employmentType === 'CONTRACTUAL' && <><label><span className="mb-1 block text-sm font-semibold">Contract start</span><input name="contractStartDate" type="date" required className="field"/></label><label><span className="mb-1 block text-sm font-semibold">Contract end</span><input name="contractEndDate" type="date" required className="field"/></label><label className="sm:col-span-2"><span className="mb-1 block text-sm font-semibold">Contract notes</span><textarea name="contractNotes" className="field" rows={3}/></label></>}
+        {employmentType === 'PERMANENT' && <label><span className="mb-1 block text-sm font-semibold">Confirmation date</span><input name="confirmationDate" type="date" className="field"/></label>}
         <label><span className="mb-1 block text-sm font-semibold">Department</span><select name="department" required className="field"><option value="">Select…</option>{refs.departments.map((item) => <option key={item._id} value={item._id}>{item.name}</option>)}</select></label>
         <label><span className="mb-1 block text-sm font-semibold">Designation</span><select name="designation" required className="field"><option value="">Select…</option>{refs.designations.map((item) => <option key={item._id} value={item._id}>{item.name}</option>)}</select></label>
         <label><span className="mb-1 block text-sm font-semibold">Grade</span><input name="grade" className="field"/></label><label><span className="mb-1 block text-sm font-semibold">Location</span><input name="location" className="field"/></label>

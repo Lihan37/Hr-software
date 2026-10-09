@@ -11,23 +11,26 @@ import { storageService } from '../storage/cloudinary.provider.js';
 import { assertEmployeeAccess, employeeScope } from './employee-access.js';
 import { Employee, employeeTypes, employmentStatuses } from './employee.model.js';
 import { EmployeeContact, EmployeeEducation, EmployeeExperience, EmployeeFamilyMember, EmployeeIdentity } from './employee-profile.model.js';
+import { employmentTypes, TraineeType } from '../employee-lifecycle/lifecycle.model.js';
+import { addUtcMonths, getHrPolicy, lifecycleEvent, nextTraineeId } from '../employee-lifecycle/lifecycle.service.js';
 
 export const employeeRouter = Router();
 employeeRouter.use(authenticate);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_r, file, cb) => cb(null, file.mimetype.startsWith('image/')) });
 
 const employeeSchema = z.object({
-  employeeId: z.string().min(3).max(30).transform((v) => v.toUpperCase().trim()),
+  employeeId: z.string().min(3).max(30).transform((v) => v.toUpperCase().trim()).optional(),
   legacyEmployeeId: z.string().max(30).optional(), candidateId: z.string().max(30).optional(),
   title: z.string().max(20).optional(), firstName: z.string().max(60).optional(), middleName: z.string().max(60).optional(), lastName: z.string().max(60).optional(),
   fullName: z.string().min(2).max(150),
   personal: z.record(z.string(), z.unknown()).optional(),
   employment: z.object({
     department: z.string(), section: z.string().nullable().optional(), designation: z.string(),
-    grade: z.string().optional(), employeeType: z.enum(employeeTypes), joiningDate: z.coerce.date(),
+    grade: z.string().optional(), employeeType: z.enum(employeeTypes).default('UNSPECIFIED'), employmentType: z.enum(employmentTypes), joiningDate: z.coerce.date(),
+    traineeType: z.string().nullable().optional(), traineeStartDate: z.coerce.date().optional(), expectedCompletionDate: z.coerce.date().optional(), traineeRemarks: z.string().max(1000).optional(),
     confirmationDate: z.coerce.date().optional(), probationStartDate: z.coerce.date().optional(), probationEndDate: z.coerce.date().optional(),
     contractStartDate: z.coerce.date().optional(), contractEndDate: z.coerce.date().optional(), retirementDate: z.coerce.date().optional(),
-    resignationDate: z.coerce.date().optional(), terminationDate: z.coerce.date().optional(), status: z.enum(employmentStatuses).default('ACTIVE'),
+    resignationDate: z.coerce.date().optional(), terminationDate: z.coerce.date().optional(), contractNotes: z.string().max(1000).optional(), status: z.enum(employmentStatuses).default('ACTIVE'),
     reportingManager: z.string().nullable().optional(), location: z.string().optional(), costCenter: z.string().optional(),
     workShift: z.string().optional(), contractNumber: z.string().optional()
   })
@@ -40,8 +43,10 @@ employeeRouter.get('/', asyncHandler(async (request, response) => {
   if (search) filter.$and = [{ $or: [{ employeeId: new RegExp(search, 'i') }, { fullName: new RegExp(search, 'i') }] }];
   if (request.query.department) filter['employment.department'] = request.query.department;
   if (request.query.status) filter['employment.status'] = request.query.status;
+  if (request.query.employmentType) filter['employment.employmentType'] = request.query.employmentType;
+  if (request.query.traineeType) filter['employment.traineeType'] = request.query.traineeType;
   const [items, total] = await Promise.all([
-    Employee.find(filter).select('-personal.nidOrPassport -employment.contractNumber').populate('employment.department employment.designation employment.reportingManager', 'name code employeeId fullName').sort({ fullName: 1 }).skip(skip).limit(limit),
+    Employee.find(filter).select('-personal.nidOrPassport -employment.contractNumber').populate('employment.department employment.designation employment.reportingManager employment.traineeType', 'name code employeeId fullName').sort({ fullName: 1 }).skip(skip).limit(limit),
     Employee.countDocuments(filter)
   ]);
   ok(response, items, { page, limit, total, pages: Math.ceil(total / limit) });
@@ -49,15 +54,33 @@ employeeRouter.get('/', asyncHandler(async (request, response) => {
 
 employeeRouter.post('/', requirePermission('employee:write'), asyncHandler(async (request, response) => {
   const input = employeeSchema.parse(request.body);
+  const employment: any = input.employment;
+  if (employment.employmentType === 'TRAINEE') {
+    if (!employment.traineeType || !employment.traineeStartDate) throw new ApiError(422, 'Trainee type and start date are required', 'TRAINEE_FIELDS_REQUIRED');
+    if (!await TraineeType.exists({ _id: employment.traineeType, isActive: true })) throw new ApiError(422, 'Trainee type is inactive or unavailable', 'INVALID_TRAINEE_TYPE');
+    const traineeId = await nextTraineeId(employment.traineeStartDate.getUTCFullYear());
+    employment.traineeId = traineeId; employment.originalTraineeId = traineeId; employment.traineeStatus = 'ACTIVE'; input.employeeId = `TRN-${traineeId}`;
+  } else if (!input.employeeId) throw new ApiError(422, 'Employee ID is required for non-trainee employees', 'EMPLOYEE_ID_REQUIRED');
+  if (employment.employmentType === 'PROBATION') {
+    if (!employment.probationStartDate) throw new ApiError(422, 'Probation start date is required', 'PROBATION_START_REQUIRED');
+    const policy: any = await getHrPolicy();
+    if (employment.probationEndDate) employment.probationEndDateSource = 'MANUAL_OVERRIDE';
+    else { employment.probationEndDate = addUtcMonths(employment.probationStartDate, policy.probationDurationMonths); employment.probationEndDateSource = 'AUTO_CALCULATED'; }
+  }
+  if (employment.employmentType === 'CONTRACTUAL') {
+    if (!employment.contractStartDate || !employment.contractEndDate) throw new ApiError(422, 'Contract start and end dates are required', 'CONTRACT_DATES_REQUIRED');
+    if (employment.contractEndDate <= employment.contractStartDate) throw new ApiError(422, 'Contract end must be after contract start', 'INVALID_CONTRACT_DATES');
+  }
   if (input.employment.reportingManager && input.employment.reportingManager === request.body._id) throw new ApiError(422, 'Employee cannot report to themselves', 'INVALID_MANAGER');
   const employee = await Employee.create(input);
+  await lifecycleEvent(employee._id, employment.employmentType === 'TRAINEE' ? 'TRAINEE_CREATED' : 'EMPLOYEE_CREATED', request.auth!.sub, { newValue: { employmentType: employment.employmentType, employeeId: employee.employeeId, traineeId: employment.traineeId } });
   await audit(request, 'EMPLOYEE_CREATED', 'Employee', employee._id, { employeeId: employee.employeeId });
   ok(response, employee, undefined, 201);
 }));
 
 employeeRouter.get('/:id', asyncHandler(async (request, response) => {
   await assertEmployeeAccess(request.auth!, String(request.params.id));
-  let query = Employee.findById(request.params.id).populate('employment.department employment.section employment.designation employment.reportingManager', 'name code employeeId fullName');
+  let query = Employee.findById(request.params.id).populate('employment.department employment.section employment.designation employment.reportingManager employment.traineeType', 'name code employeeId fullName');
   if (!['SUPER_ADMIN', 'HR_ADMIN', 'HR'].includes(request.auth!.role)) query = query.select('-personal.nidOrPassport -employment.contractNumber');
   const employee = await query;
   if (!employee) throw new ApiError(404, 'Employee not found', 'NOT_FOUND');
@@ -104,7 +127,8 @@ employeeRouter.put('/:id/profile-data/identity', requirePermission('employee:wri
 }));
 
 employeeRouter.patch('/:id', requirePermission('employee:write'), asyncHandler(async (request, response) => {
-  const input = employeeSchema.partial().parse(request.body);
+  const input = employeeSchema.partial().extend({ employment: employeeSchema.shape.employment.partial().optional() }).parse(request.body);
+  if (input.employment?.employmentType || input.employment?.traineeType) throw new ApiError(422, 'Use the controlled lifecycle workflow to change employment or trainee type', 'LIFECYCLE_WORKFLOW_REQUIRED');
   if (input.employment?.reportingManager === request.params.id) throw new ApiError(422, 'Employee cannot report to themselves', 'INVALID_MANAGER');
   const employee = await Employee.findByIdAndUpdate(request.params.id, input, { new: true, runValidators: true });
   if (!employee) throw new ApiError(404, 'Employee not found', 'NOT_FOUND');

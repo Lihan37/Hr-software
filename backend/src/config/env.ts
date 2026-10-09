@@ -16,6 +16,8 @@ const schema = z.object({
   STORAGE_PROVIDER: z.enum(['cloudinary']).default('cloudinary'),
   COOKIE_SECURE: z.stringbool().default(false),
   ENABLE_BIOMETRIC_SIMULATOR: z.stringbool().default(true)
+  , ENABLE_SCHEDULER: z.stringbool().default(true),
+  SCHEDULER_INTERVAL_HOURS: z.coerce.number().positive().default(24)
 });
 
 const parsed = schema.safeParse(process.env);
