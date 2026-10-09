@@ -50,6 +50,7 @@ const familySchema = new Schema({
   name: { type: String, required: true, trim: true },
   occupation: String,
   dateOfBirth: Date,
+  anniversaryDate: Date,
   phone: String,
   dependent: { type: Boolean, default: false },
 }, { timestamps: true });
@@ -78,3 +79,16 @@ const experienceSchema = new Schema({
 }, { timestamps: true });
 experienceSchema.index({ employee: 1, endDate: -1 });
 export const EmployeeExperience = model('EmployeeExperience', experienceSchema);
+
+const bankAccountSchema = new Schema({
+  employee: { type: Schema.Types.ObjectId, ref: 'Employee', required: true, unique: true, index: true },
+  bankName: { type: String, trim: true },
+  branchName: { type: String, trim: true },
+  accountName: { type: String, trim: true },
+  accountNumber: { type: String, trim: true, select: false },
+  routingNumber: { type: String, trim: true, select: false },
+  accountType: { type: String, enum: ['SAVINGS', 'CURRENT', 'SALARY', 'OTHER'] },
+  mobileFinancialService: { type: String, trim: true },
+  mobileAccountNumber: { type: String, trim: true, select: false },
+}, { timestamps: true, optimisticConcurrency: true });
+export const EmployeeBankAccount = model('EmployeeBankAccount', bankAccountSchema);

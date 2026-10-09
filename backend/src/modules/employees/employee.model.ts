@@ -55,7 +55,16 @@ const employeeSchema = new Schema({
     retirementDate: Date, resignationDate: Date, terminationDate: Date,
     status: { type: String, enum: employmentStatuses, default: 'ACTIVE', index: true },
     reportingManager: { type: Schema.Types.ObjectId, ref: 'Employee', default: null, index: true },
-    location: String, locationRef: { type: Schema.Types.ObjectId, ref: 'Location', default: null, index: true }, costCenter: String, workShift: String, contractNumber: { type: String, select: false }
+    reviewer: { type: Schema.Types.ObjectId, ref: 'Employee', default: null },
+    employeeOf: String, divisionName: String, businessUnit: String, branch: String, subDepartment: String,
+    location: String, locationRef: { type: Schema.Types.ObjectId, ref: 'Location', default: null, index: true },
+    workforceType: { type: String, enum: ['LOCAL', 'EXPAT'], default: 'LOCAL' }, employeeCategory: String,
+    jobDescription: String, jobLevel: String, employeeBand: String, costCenter: String,
+    actualJoiningDate: Date, approvedPositionId: String, requisitionNo: String, joiningSource: String,
+    timeAttendanceApplicable: { type: Boolean, default: true }, workShift: String, dutySchedule: String,
+    lockerNumber: String, dormitory: String, uniformApplicable: { type: Boolean, default: false },
+    regionName: String, clusterName: String, depotName: String, territoryName: String, areaName: String,
+    otherErpId: String, employmentRemarks: String, contractNumber: { type: String, select: false }
   }
 }, { timestamps: true, optimisticConcurrency: true });
 
