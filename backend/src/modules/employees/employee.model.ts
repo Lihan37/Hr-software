@@ -50,10 +50,12 @@ const employeeSchema = new Schema({
     probationEndDateSource: { type: String, enum: ['AUTO_CALCULATED', 'MANUAL_OVERRIDE'] },
     probationEvaluationStatus: { type: String, enum: ['NOT_STARTED', 'PENDING_MANAGER', 'PENDING_HR', 'PENDING_FINAL', 'COMPLETED'], default: 'NOT_STARTED' },
     probationCycle: { type: Number, min: 1, default: 1 }, contractNotes: String,
+    probationDurationMonths: { type: Number, min: 1, max: 36 }, probationReminderDays: { type: Number, min: 0, max: 180 },
+    contractReminderDays: { type: Number, min: 0, max: 365 }, traineeReminderDays: { type: Number, min: 0, max: 180 },
     retirementDate: Date, resignationDate: Date, terminationDate: Date,
     status: { type: String, enum: employmentStatuses, default: 'ACTIVE', index: true },
     reportingManager: { type: Schema.Types.ObjectId, ref: 'Employee', default: null, index: true },
-    location: String, costCenter: String, workShift: String, contractNumber: { type: String, select: false }
+    location: String, locationRef: { type: Schema.Types.ObjectId, ref: 'Location', default: null, index: true }, costCenter: String, workShift: String, contractNumber: { type: String, select: false }
   }
 }, { timestamps: true, optimisticConcurrency: true });
 

@@ -16,14 +16,15 @@ async function upsertReminder(employee: any, type: 'PROBATION_EVALUATION_DUE'|'C
 export async function runEmployeeLifecycleReminderJobs(now = new Date()) {
   const policy: any = await getHrPolicy(); const upper = (days: number) => new Date(now.getTime() + days * 86_400_000);
   const [probation, contracts, trainees] = await Promise.all([
-    Employee.find({ 'employment.employmentType': 'PROBATION', 'employment.status': 'ACTIVE', 'employment.probationEndDate': { $lte: upper(policy.probationEvaluationReminderDays) }, 'employment.probationEvaluationStatus': { $ne: 'COMPLETED' } }),
-    Employee.find({ 'employment.employmentType': 'CONTRACTUAL', 'employment.status': 'ACTIVE', 'employment.contractEndDate': { $lte: upper(policy.contractExpiryReminderDays) } }),
-    Employee.find({ 'employment.employmentType': 'TRAINEE', 'employment.status': 'ACTIVE', 'employment.expectedCompletionDate': { $lte: upper(policy.traineeCompletionReminderDays) }, 'employment.traineeStatus': 'ACTIVE' }),
+    Employee.find({ 'employment.employmentType': 'PROBATION', 'employment.status': 'ACTIVE', 'employment.probationEndDate': { $ne: null }, 'employment.probationEvaluationStatus': { $ne: 'COMPLETED' } }),
+    Employee.find({ 'employment.employmentType': 'CONTRACTUAL', 'employment.status': 'ACTIVE', 'employment.contractEndDate': { $ne: null } }),
+    Employee.find({ 'employment.employmentType': 'TRAINEE', 'employment.status': 'ACTIVE', 'employment.expectedCompletionDate': { $ne: null }, 'employment.traineeStatus': 'ACTIVE' }),
   ]);
-  for (const employee of probation as any[]) await upsertReminder(employee, 'PROBATION_EVALUATION_DUE', employee.employment.probationEndDate, String(employee.employment.probationCycle ?? 1), 'Probation Evaluation Due');
-  for (const employee of contracts as any[]) await upsertReminder(employee, 'CONTRACT_EXPIRY_APPROACHING', employee.employment.contractEndDate, employee.employment.contractEndDate.toISOString(), 'Contract Expiry Approaching');
-  for (const employee of trainees as any[]) await upsertReminder(employee, 'TRAINEE_COMPLETION_DUE', employee.employment.expectedCompletionDate, employee.employment.expectedCompletionDate.toISOString(), 'Trainee Completion Review Due');
-  return { probation: probation.length, contracts: contracts.length, trainees: trainees.length };
+  let probationCount = 0; let contractCount = 0; let traineeCount = 0;
+  for (const employee of probation as any[]) if (employee.employment.probationEndDate <= upper(employee.employment.probationReminderDays ?? policy.probationEvaluationReminderDays)) { await upsertReminder(employee, 'PROBATION_EVALUATION_DUE', employee.employment.probationEndDate, String(employee.employment.probationCycle ?? 1), 'Probation Evaluation Due'); probationCount++; }
+  for (const employee of contracts as any[]) if (employee.employment.contractEndDate <= upper(employee.employment.contractReminderDays ?? policy.contractExpiryReminderDays)) { await upsertReminder(employee, 'CONTRACT_EXPIRY_APPROACHING', employee.employment.contractEndDate, employee.employment.contractEndDate.toISOString(), 'Contract Expiry Approaching'); contractCount++; }
+  for (const employee of trainees as any[]) if (employee.employment.expectedCompletionDate <= upper(employee.employment.traineeReminderDays ?? policy.traineeCompletionReminderDays)) { await upsertReminder(employee, 'TRAINEE_COMPLETION_DUE', employee.employment.expectedCompletionDate, employee.employment.expectedCompletionDate.toISOString(), 'Trainee Completion Review Due'); traineeCount++; }
+  return { probation: probationCount, contracts: contractCount, trainees: traineeCount };
 }
 
 export async function lifecycleEvent(employee: unknown, eventType: string, performedBy: unknown, values: { previousValue?: unknown; newValue?: unknown; reason?: string; metadata?: unknown } = {}) { return EmployeeLifecycleEvent.create({ employee, eventType, performedBy, effectiveDate: new Date(), ...values }); }

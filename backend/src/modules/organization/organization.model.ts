@@ -16,3 +16,4 @@ function namedEntitySchema(extra: Record<string, unknown> = {}) {
 export const Department = model('Department', namedEntitySchema());
 export const Section = model('Section', namedEntitySchema({ department: { type: Schema.Types.ObjectId, ref: 'Department', required: true, index: true } }));
 export const Designation = model('Designation', namedEntitySchema({ rank: { type: Number, default: 0 } }));
+export const Location = model('Location', namedEntitySchema({ address: String, timezone: { type: String, default: 'Asia/Dhaka' } }));

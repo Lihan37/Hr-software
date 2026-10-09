@@ -14,6 +14,7 @@ import {
   ClipboardCheck,
   Command,
   LogOut,
+  MapPin,
   Menu,
   Search,
   ShieldCheck,
@@ -66,7 +67,7 @@ const navigation: readonly NavGroup[] = [
   },
   {
     label: 'System',
-    items: [{ label: 'Administration', href: '/administration', icon: ShieldCheck, roles: hrRoles, aliases: ['users', 'roles', 'audit'] }, { label: 'HR lifecycle policy', href: '/administration/hr-policy', icon: ShieldCheck, roles: ['SUPER_ADMIN', 'HR_ADMIN'], aliases: ['probation policy', 'reminders', 'timezone'] }],
+    items: [{ label: 'Administration', href: '/administration', icon: ShieldCheck, roles: hrRoles, aliases: ['users', 'roles', 'audit'] }, { label: 'Locations', href: '/administration/locations', icon: MapPin, roles: ['SUPER_ADMIN', 'HR_ADMIN'], aliases: ['office', 'work location', 'branch'] }, { label: 'HR lifecycle policy', href: '/administration/hr-policy', icon: ShieldCheck, roles: ['SUPER_ADMIN', 'HR_ADMIN'], aliases: ['probation policy', 'reminders', 'timezone'] }],
   },
 ];
 

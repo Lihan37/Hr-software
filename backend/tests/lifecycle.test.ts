@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Notification, Sequence } from '../src/modules/employee-lifecycle/lifecycle.model.js';
 import { addUtcMonths, nextTraineeId, reminderStatus } from '../src/modules/employee-lifecycle/lifecycle.service.js';
 import { hasPermission } from '../src/modules/auth/permissions.js';
+import { Employee } from '../src/modules/employees/employee.model.js';
+import { Location } from '../src/modules/organization/organization.model.js';
 
 describe('employee lifecycle policies', () => {
   beforeEach(() => vi.restoreAllMocks());
@@ -40,5 +42,14 @@ describe('employee lifecycle policies', () => {
     expect(hasPermission('MANAGER', 'probation:evaluate:manager')).toBe(true);
     expect(hasPermission('MANAGER', 'probation:finalize')).toBe(false);
     expect(hasPermission('HR', 'probation:finalize')).toBe(true);
+  });
+
+  it('stores employee-specific lifecycle overrides and a controlled location reference', () => {
+    expect(Employee.schema.path('employment.probationDurationMonths')).toBeDefined();
+    expect(Employee.schema.path('employment.probationReminderDays')).toBeDefined();
+    expect(Employee.schema.path('employment.contractReminderDays')).toBeDefined();
+    expect(Employee.schema.path('employment.traineeReminderDays')).toBeDefined();
+    expect(Employee.schema.path('employment.locationRef')?.options.ref).toBe('Location');
+    expect(Location.schema.path('timezone')).toBeDefined();
   });
 });

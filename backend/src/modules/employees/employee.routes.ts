@@ -13,6 +13,7 @@ import { Employee, employeeTypes, employmentStatuses } from './employee.model.js
 import { EmployeeContact, EmployeeEducation, EmployeeExperience, EmployeeFamilyMember, EmployeeIdentity } from './employee-profile.model.js';
 import { employmentTypes, TraineeType } from '../employee-lifecycle/lifecycle.model.js';
 import { addUtcMonths, getHrPolicy, lifecycleEvent, nextTraineeId } from '../employee-lifecycle/lifecycle.service.js';
+import { Location } from '../organization/organization.model.js';
 
 export const employeeRouter = Router();
 employeeRouter.use(authenticate);
@@ -22,7 +23,7 @@ const employeeSchema = z.object({
   employeeId: z.string().min(3).max(30).transform((v) => v.toUpperCase().trim()).optional(),
   legacyEmployeeId: z.string().max(30).optional(), candidateId: z.string().max(30).optional(),
   title: z.string().max(20).optional(), firstName: z.string().max(60).optional(), middleName: z.string().max(60).optional(), lastName: z.string().max(60).optional(),
-  fullName: z.string().min(2).max(150),
+  fullName: z.string().min(2).max(150).optional(),
   personal: z.record(z.string(), z.unknown()).optional(),
   employment: z.object({
     department: z.string(), section: z.string().nullable().optional(), designation: z.string(),
@@ -30,8 +31,9 @@ const employeeSchema = z.object({
     traineeType: z.string().nullable().optional(), traineeStartDate: z.coerce.date().optional(), expectedCompletionDate: z.coerce.date().optional(), traineeRemarks: z.string().max(1000).optional(),
     confirmationDate: z.coerce.date().optional(), probationStartDate: z.coerce.date().optional(), probationEndDate: z.coerce.date().optional(),
     contractStartDate: z.coerce.date().optional(), contractEndDate: z.coerce.date().optional(), retirementDate: z.coerce.date().optional(),
-    resignationDate: z.coerce.date().optional(), terminationDate: z.coerce.date().optional(), contractNotes: z.string().max(1000).optional(), status: z.enum(employmentStatuses).default('ACTIVE'),
-    reportingManager: z.string().nullable().optional(), location: z.string().optional(), costCenter: z.string().optional(),
+    resignationDate: z.coerce.date().optional(), terminationDate: z.coerce.date().optional(), contractNotes: z.string().max(1000).optional(),
+    probationDurationMonths: z.coerce.number().int().min(1).max(36).optional(), probationReminderDays: z.coerce.number().int().min(0).max(180).optional(), contractReminderDays: z.coerce.number().int().min(0).max(365).optional(), traineeReminderDays: z.coerce.number().int().min(0).max(180).optional(), status: z.enum(employmentStatuses).default('ACTIVE'),
+    reportingManager: z.string().nullable().optional(), location: z.string().optional(), locationRef: z.string().nullable().optional(), costCenter: z.string().optional(),
     workShift: z.string().optional(), contractNumber: z.string().optional()
   })
 });
@@ -46,7 +48,7 @@ employeeRouter.get('/', asyncHandler(async (request, response) => {
   if (request.query.employmentType) filter['employment.employmentType'] = request.query.employmentType;
   if (request.query.traineeType) filter['employment.traineeType'] = request.query.traineeType;
   const [items, total] = await Promise.all([
-    Employee.find(filter).select('-personal.nidOrPassport -employment.contractNumber').populate('employment.department employment.designation employment.reportingManager employment.traineeType', 'name code employeeId fullName').sort({ fullName: 1 }).skip(skip).limit(limit),
+    Employee.find(filter).select('-personal.nidOrPassport -employment.contractNumber').populate('employment.department employment.designation employment.reportingManager employment.traineeType employment.locationRef', 'name code employeeId fullName timezone').sort({ fullName: 1 }).skip(skip).limit(limit),
     Employee.countDocuments(filter)
   ]);
   ok(response, items, { page, limit, total, pages: Math.ceil(total / limit) });
@@ -54,6 +56,8 @@ employeeRouter.get('/', asyncHandler(async (request, response) => {
 
 employeeRouter.post('/', requirePermission('employee:write'), asyncHandler(async (request, response) => {
   const input = employeeSchema.parse(request.body);
+  if (!input.fullName) input.fullName = [input.firstName, input.middleName, input.lastName].filter(Boolean).join(' ').trim();
+  if (!input.fullName) throw new ApiError(422, 'First or last name is required', 'EMPLOYEE_NAME_REQUIRED');
   const employment: any = input.employment;
   if (employment.employmentType === 'TRAINEE') {
     if (!employment.traineeType || !employment.traineeStartDate) throw new ApiError(422, 'Trainee type and start date are required', 'TRAINEE_FIELDS_REQUIRED');
@@ -61,11 +65,12 @@ employeeRouter.post('/', requirePermission('employee:write'), asyncHandler(async
     const traineeId = await nextTraineeId(employment.traineeStartDate.getUTCFullYear());
     employment.traineeId = traineeId; employment.originalTraineeId = traineeId; employment.traineeStatus = 'ACTIVE'; input.employeeId = `TRN-${traineeId}`;
   } else if (!input.employeeId) throw new ApiError(422, 'Employee ID is required for non-trainee employees', 'EMPLOYEE_ID_REQUIRED');
+  if (employment.locationRef && !await Location.exists({ _id: employment.locationRef, active: true })) throw new ApiError(422, 'Location is inactive or unavailable', 'INVALID_LOCATION');
   if (employment.employmentType === 'PROBATION') {
     if (!employment.probationStartDate) throw new ApiError(422, 'Probation start date is required', 'PROBATION_START_REQUIRED');
     const policy: any = await getHrPolicy();
     if (employment.probationEndDate) employment.probationEndDateSource = 'MANUAL_OVERRIDE';
-    else { employment.probationEndDate = addUtcMonths(employment.probationStartDate, policy.probationDurationMonths); employment.probationEndDateSource = 'AUTO_CALCULATED'; }
+    else { employment.probationEndDate = addUtcMonths(employment.probationStartDate, employment.probationDurationMonths ?? policy.probationDurationMonths); employment.probationEndDateSource = 'AUTO_CALCULATED'; }
   }
   if (employment.employmentType === 'CONTRACTUAL') {
     if (!employment.contractStartDate || !employment.contractEndDate) throw new ApiError(422, 'Contract start and end dates are required', 'CONTRACT_DATES_REQUIRED');
@@ -80,7 +85,7 @@ employeeRouter.post('/', requirePermission('employee:write'), asyncHandler(async
 
 employeeRouter.get('/:id', asyncHandler(async (request, response) => {
   await assertEmployeeAccess(request.auth!, String(request.params.id));
-  let query = Employee.findById(request.params.id).populate('employment.department employment.section employment.designation employment.reportingManager employment.traineeType', 'name code employeeId fullName');
+  let query = Employee.findById(request.params.id).populate('employment.department employment.section employment.designation employment.reportingManager employment.traineeType employment.locationRef', 'name code employeeId fullName timezone');
   if (!['SUPER_ADMIN', 'HR_ADMIN', 'HR'].includes(request.auth!.role)) query = query.select('-personal.nidOrPassport -employment.contractNumber');
   const employee = await query;
   if (!employee) throw new ApiError(404, 'Employee not found', 'NOT_FOUND');

@@ -5,12 +5,12 @@ import { asyncHandler } from '../../utils/async-handler.js';
 import { ApiError } from '../../utils/api-error.js';
 import { ok } from '../../utils/api-response.js';
 import { audit } from '../audit/audit.service.js';
-import { Department, Designation, Section } from './organization.model.js';
+import { Department, Designation, Location, Section } from './organization.model.js';
 
 export const organizationRouter = Router();
 organizationRouter.use(authenticate);
-const schema = z.object({ name: z.string().min(2).max(100), code: z.string().min(2).max(20), description: z.string().max(500).optional(), active: z.boolean().optional(), department: z.string().optional(), rank: z.number().int().optional() });
-const resources: Record<string, any> = { departments: Department, sections: Section, designations: Designation };
+const schema = z.object({ name: z.string().min(2).max(100), code: z.string().min(2).max(20), description: z.string().max(500).optional(), active: z.boolean().optional(), department: z.string().optional(), rank: z.number().int().optional(), address: z.string().max(300).optional(), timezone: z.string().max(80).optional() });
+const resources: Record<string, any> = { departments: Department, sections: Section, designations: Designation, locations: Location };
 
 for (const [path, Model] of Object.entries(resources)) {
   organizationRouter.get(`/${path}`, asyncHandler(async (_request, response) => ok(response, await Model.find().sort({ active: -1, name: 1 }))));
