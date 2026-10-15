@@ -62,7 +62,7 @@ const navigation: readonly NavGroup[] = [
     items: [
       { label: 'Employee master', href: '/employees', icon: Users, roles: peopleRoles, aliases: ['employees', 'directory'] },
       { label: 'Probation evaluations', href: '/employees/probation-evaluations', icon: ClipboardCheck, roles: approvalRoles, aliases: ['probation', 'evaluation', 'confirmation'] },
-      { label: 'Organization', href: '/people/organization', icon: Building2, roles: hrRoles, aliases: ['departments', 'designations'] },
+      { label: 'Organization', href: '/people/organization', icon: Building2, roles: hrRoles, aliases: ['departments', 'designations', 'business units', 'branches', 'cost centers', 'employee levels'] },
     ],
   },
   {

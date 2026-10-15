@@ -140,6 +140,15 @@ employeeRouter.get('/:id/profile-data', asyncHandler(async (request, response) =
   ok(response, { contact, identity, family, education, experience, bank, identityRestricted: !canViewIdentity, bankRestricted: !canViewBank });
 }));
 
+employeeRouter.get('/:id/id-card-data', requirePermission('employee:id-card:generate'), asyncHandler(async (request, response) => {
+  const employee = await Employee.findById(request.params.id)
+    .select('employeeId fullName profilePhoto personal.bloodGroup employment.joiningDate employment.department employment.designation employment.locationRef employment.location')
+    .populate('employment.department employment.designation employment.locationRef', 'name code');
+  if (!employee) throw new ApiError(404, 'Employee not found', 'NOT_FOUND');
+  await audit(request, 'EMPLOYEE_ID_CARD_DATA_VIEWED', 'Employee', employee._id, { employeeId: employee.employeeId });
+  ok(response, employee);
+}));
+
 employeeRouter.put('/:id/profile-data/contact', requirePermission('employee:write'), asyncHandler(async (request, response) => {
   if (!await Employee.exists({ _id: request.params.id })) throw new ApiError(404, 'Employee not found', 'NOT_FOUND');
   const input = contactInput.parse(request.body);
@@ -178,9 +187,20 @@ employeeRouter.patch('/:id', requirePermission('employee:write'), asyncHandler(a
   const input = employeeSchema.partial().extend({ employment: employeeSchema.shape.employment.partial().optional() }).parse(request.body);
   if (input.employment?.employmentType || input.employment?.traineeType) throw new ApiError(422, 'Use the controlled lifecycle workflow to change employment or trainee type', 'LIFECYCLE_WORKFLOW_REQUIRED');
   if (input.employment?.reportingManager === request.params.id) throw new ApiError(422, 'Employee cannot report to themselves', 'INVALID_MANAGER');
-  const employee = await Employee.findByIdAndUpdate(request.params.id, input, { new: true, runValidators: true });
-  if (!employee) throw new ApiError(404, 'Employee not found', 'NOT_FOUND');
-  await audit(request, 'EMPLOYEE_UPDATED', 'Employee', employee._id, input);
+  if (input.employment?.locationRef && !await Location.exists({ _id: input.employment.locationRef, active: true })) throw new ApiError(422, 'Location is inactive or unavailable', 'INVALID_LOCATION');
+  const current = await Employee.findById(request.params.id);
+  if (!current) throw new ApiError(404, 'Employee not found', 'NOT_FOUND');
+  const updates: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) if (key !== 'personal' && key !== 'employment' && value !== undefined) updates[key] = value;
+  for (const [key, value] of Object.entries(input.personal ?? {})) if (value !== undefined) updates[`personal.${key}`] = value;
+  for (const [key, value] of Object.entries(input.employment ?? {})) if (value !== undefined) updates[`employment.${key}`] = value;
+  if (input.firstName !== undefined || input.middleName !== undefined || input.lastName !== undefined) {
+    const fullName = [input.firstName ?? current.firstName, input.middleName ?? current.middleName, input.lastName ?? current.lastName].filter(Boolean).join(' ').trim();
+    if (!fullName) throw new ApiError(422, 'First or last name is required', 'EMPLOYEE_NAME_REQUIRED');
+    updates.fullName = fullName;
+  }
+  const employee = await Employee.findByIdAndUpdate(request.params.id, { $set: updates }, { new: true, runValidators: true });
+  await audit(request, 'EMPLOYEE_UPDATED', 'Employee', employee!._id, input);
   ok(response, employee);
 }));
 
