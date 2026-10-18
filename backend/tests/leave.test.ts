@@ -1,22 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { calculateRequestedDays, nextLeaveStatus, overlaps, summarizeLedger } from '../src/modules/leave/leave.policy.js';
+import { CompensatoryHolidayCredit, LeaveLedgerEntry, LeaveRequest, WeeklyHolidaySchedule } from '../src/modules/leave/leave.model.js';
+import { chOperationId, calculateRequestedDays, isConfirmedPermanent, nextLeaveStatus, OFFICIAL_ENTITLEMENTS, overlaps, splitDaysByLeaveYear, summarizeLedger } from '../src/modules/leave/leave.policy.js';
+import { rolePermissions } from '../src/modules/auth/permissions.js';
 
-describe('leave rules', () => {
-  it('calculates calendar days while policy calendars remain configurable', () => {
-    expect(calculateRequestedDays(new Date('2026-09-10'), new Date('2026-09-12'))).toBe(3);
-    expect(calculateRequestedDays(new Date('2026-09-10'), new Date('2026-09-10'), 'FIRST_HALF')).toBe(0.5);
-    expect(() => calculateRequestedDays(new Date('2026-09-12'), new Date('2026-09-10'))).toThrow();
-  });
-  it('detects inclusive overlap', () => {
-    expect(overlaps(new Date('2026-09-10'), new Date('2026-09-12'), new Date('2026-09-12'), new Date('2026-09-14'))).toBe(true);
-    expect(overlaps(new Date('2026-09-10'), new Date('2026-09-11'), new Date('2026-09-12'), new Date('2026-09-14'))).toBe(false);
-  });
-  it('derives balances from ledger history', () => {
-    expect(summarizeLedger([{ type: 'ENTITLEMENT', amount: 12 }, { type: 'RESERVATION', amount: -1 }, { type: 'USAGE', amount: -5 }])).toEqual({ entitled: 12, adjustments: 0, used: 5, pending: 1, remaining: 6 });
-  });
-  it('enforces manager then HR leave approval', () => {
-    expect(nextLeaveStatus('PENDING_MANAGER', 'MANAGER', 'APPROVE')).toBe('PENDING_HR');
-    expect(nextLeaveStatus('PENDING_HR', 'HR_ADMIN', 'APPROVE')).toBe('APPROVED');
-    expect(() => nextLeaveStatus('PENDING_HR', 'MANAGER', 'APPROVE')).toThrow();
-  });
+describe('production leave rules', () => {
+  it('uses official annual entitlements and no CH annual grant', () => expect(OFFICIAL_ENTITLEMENTS).toEqual({ CL: 10, SL: 14, AL: 20, CH: 0 }));
+  it('supports whole days and rejects invalid ranges and half days', () => { expect(calculateRequestedDays(new Date('2026-09-10'), new Date('2026-09-12'))).toBe(3); expect(() => calculateRequestedDays(new Date('2026-09-10'), new Date('2026-09-10'), 'FIRST_HALF' as never)).toThrow('Half-day'); expect(() => calculateRequestedDays(new Date('2026-09-12'), new Date('2026-09-10'))).toThrow(); });
+  it('splits December/January requests without losing days', () => expect(splitDaysByLeaveYear(new Date('2026-12-30'), new Date('2027-01-02'))).toEqual([{ year: 2026, days: 2 }, { year: 2027, days: 2 }]));
+  it('detects inclusive overlap', () => { expect(overlaps(new Date('2026-09-10'), new Date('2026-09-12'), new Date('2026-09-12'), new Date('2026-09-14'))).toBe(true); expect(overlaps(new Date('2026-09-10'), new Date('2026-09-11'), new Date('2026-09-12'), new Date('2026-09-14'))).toBe(false); });
+  it('derives decimal-safe ledger summaries', () => expect(summarizeLedger([{ type: 'ANNUAL_ENTITLEMENT', amount: 10 }, { type: 'ACCRUAL_CREDIT', amount: .33 }, { type: 'LEAVE_RESERVATION', amount: -1 }, { type: 'RESERVATION_RELEASE', amount: 1 }, { type: 'LEAVE_DEDUCTION', amount: -2 }])).toMatchObject({ entitled: 10, accrued: .33, used: 2, pending: 0, available: 8.33 }));
+  it('requires active permanent confirmation', () => { expect(isConfirmedPermanent({ employment: { employmentType: 'PERMANENT', confirmationDate: '2026-05-01', status: 'ACTIVE' } }, new Date('2026-06-01'))).toBe(true); expect(isConfirmedPermanent({ employment: { employmentType: 'PROBATION', confirmationDate: null, status: 'ACTIVE' } }, new Date('2026-06-01'))).toBe(false); });
+  it('enforces HOD then HR and refuses stage skipping', () => { expect(nextLeaveStatus('PENDING_HOD', 'HOD', 'APPROVE')).toBe('PENDING_HR'); expect(nextLeaveStatus('PENDING_HR', 'HR', 'APPROVE')).toBe('APPROVED'); expect(() => nextLeaveStatus('PENDING_HOD', 'HR', 'APPROVE')).toThrow(); });
+  it('supports rejection and return', () => { expect(nextLeaveStatus('PENDING_HOD', 'HOD', 'RETURN')).toBe('RETURNED'); expect(nextLeaveStatus('PENDING_HR', 'HR', 'REJECT')).toBe('REJECTED'); });
+  it('uses stable CH operation identifiers', () => expect(chOperationId('EMP-1', new Date('2026-10-21T16:30:00Z'))).toBe(chOperationId('EMP-1', new Date('2026-10-21T01:00:00Z'))));
+  it('declares unique schedule, CH and ledger operation indexes', () => { expect(WeeklyHolidaySchedule.schema.indexes().some(([fields, options]) => fields.employee === 1 && fields.date === 1 && options.unique)).toBe(true); expect(CompensatoryHolidayCredit.schema.path('operationId')?.options.unique).toBe(true); expect(LeaveLedgerEntry.schema.path('operationId')?.options.unique).toBe(true); });
+  it('preserves HOD assignment and cancellation history', () => { expect(LeaveRequest.schema.path('assignedHod')).toBeDefined(); expect(LeaveRequest.schema.path('cancellation.reason')).toBeDefined(); expect((LeaveRequest.schema.path('status') as any).enumValues).toContain('CANCELLED'); });
+  it('grants cancellation only to HR roles', () => { for (const role of ['SUPER_ADMIN', 'HR_ADMIN', 'HR'] as const) expect(rolePermissions[role]).toContain('leave:cancel'); expect(rolePermissions.MANAGER).not.toContain('leave:cancel'); expect(rolePermissions.EMPLOYEE).not.toContain('leave:cancel'); });
 });

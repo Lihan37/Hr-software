@@ -1,6 +1,6 @@
 import { Schema, model } from 'mongoose';
 
-export const attendanceStatuses = ['PRESENT', 'ABSENT', 'LEAVE', 'WEEKLY_OFF', 'PUBLIC_HOLIDAY', 'MISSING_PUNCH'] as const;
+export const attendanceStatuses = ['PRESENT', 'ABSENT', 'LEAVE', 'APPROVED_LEAVE', 'WEEKLY_OFF', 'WEEKLY_HOLIDAY', 'WORKED_WEEKLY_HOLIDAY', 'PUBLIC_HOLIDAY', 'MISSING_PUNCH', 'ATTENDANCE_CORRECTION'] as const;
 export const attendanceSources = ['MANUAL', 'BIOMETRIC', 'IMPORT', 'SYSTEM'] as const;
 
 const attendanceSchema = new Schema({
@@ -15,7 +15,7 @@ const attendanceSchema = new Schema({
   overtimeMinutes: { type: Number, min: 0, default: 0 },
   status: { type: String, enum: attendanceStatuses, required: true, index: true },
   source: { type: String, enum: attendanceSources, required: true },
-  notes: String,
+  notes: String, leaveRequest: { type: Schema.Types.ObjectId, ref: 'LeaveRequest', default: null },
   rawPunches: [{ type: Schema.Types.ObjectId, ref: 'BiometricPunch' }],
   lastModifiedBy: { type: Schema.Types.ObjectId, ref: 'User' },
   modificationReason: String

@@ -9,6 +9,7 @@ import { audit } from '../audit/audit.service.js';
 import { Employee } from '../employees/employee.model.js';
 import { Attendance, attendanceSources, attendanceStatuses } from './attendance.model.js';
 import { calculateAttendance, utcDay } from './attendance.policy.js';
+import { processCompensatoryHoliday, reevaluateCompensatoryHoliday } from '../leave/leave.service.js';
 
 export const attendanceRouter = Router();
 attendanceRouter.use(authenticate);
@@ -48,6 +49,7 @@ attendanceRouter.post('/', requirePermission('attendance:write'), asyncHandler(a
   const calculated = calculateAttendance(input);
   const attendance = await Attendance.create({ ...input, date: utcDay(input.date), ...calculated, ...(input.status ? { status: input.status } : {}), lastModifiedBy: request.auth!.sub });
   await audit(request, 'ATTENDANCE_CREATED', 'Attendance', attendance._id, { ...input, calculated });
+  await processCompensatoryHoliday(String(attendance._id), request.auth!.sub);
   ok(response, attendance, undefined, 201);
 }));
 
@@ -60,6 +62,7 @@ attendanceRouter.patch('/:id', requirePermission('attendance:write'), asyncHandl
   if (!current.original?.checkIn && !current.original?.checkOut) current.original = { checkIn: current.checkIn, checkOut: current.checkOut, source: current.source } as any;
   Object.assign(current, input, calculated, input.status ? { status: input.status } : {}, { lastModifiedBy: request.auth!.sub });
   await current.save();
+  await reevaluateCompensatoryHoliday(String(current._id), request.auth!.sub);
   await audit(request, 'ATTENDANCE_UPDATED', 'Attendance', current._id, { before: nextValues, requested: input, calculated });
   ok(response, current);
 }));

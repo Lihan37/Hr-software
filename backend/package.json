@@ -13,7 +13,9 @@
     "seed": "tsx src/scripts/seed.ts",
     "import:legacy": "tsx src/scripts/import-legacy-employees.ts",
     "import:legacy:apply": "tsx src/scripts/import-legacy-employees.ts --apply"
-    , "migration:employment-type:report": "tsx src/scripts/report-employment-type-migration.ts"
+    , "migration:employment-type:report": "tsx src/scripts/report-employment-type-migration.ts",
+    "migration:leave:dry": "tsx src/scripts/migrate-leave-management.ts",
+    "migration:leave:apply": "tsx src/scripts/migrate-leave-management.ts --apply"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

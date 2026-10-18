@@ -10,6 +10,7 @@ import { calculateAttendance } from '../attendance/attendance.policy.js';
 import { Employee } from '../employees/employee.model.js';
 import { AttendanceCorrection } from './attendance-correction.model.js';
 import { nextCorrectionStatus } from './correction.workflow.js';
+import { reevaluateCompensatoryHoliday } from '../leave/leave.service.js';
 
 export const correctionRouter = Router(); correctionRouter.use(authenticate);
 
@@ -52,6 +53,7 @@ correctionRouter.post('/:id/decision', asyncHandler(async (request, response) =>
       attendance.checkIn = correction.requestedValues?.checkIn; attendance.checkOut = correction.requestedValues?.checkOut;
       Object.assign(attendance, calculateAttendance({ checkIn: attendance.checkIn ?? undefined, checkOut: attendance.checkOut ?? undefined, scheduledStart: attendance.scheduledStart ?? undefined, scheduledEnd: attendance.scheduledEnd ?? undefined }), { lastModifiedBy: request.auth!.sub, modificationReason: correction.reason });
       await attendance.save();
+      await reevaluateCompensatoryHoliday(String(attendance._id), request.auth!.sub);
     }
   }
   await audit(request, `ATTENDANCE_CORRECTION_${input.action}`, 'AttendanceCorrection', correction._id, { status: correction.status, comment: input.comment });

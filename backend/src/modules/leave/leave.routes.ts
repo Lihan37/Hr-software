@@ -4,99 +4,102 @@ import { authenticate, requirePermission } from '../../middleware/auth.js';
 import { asyncHandler } from '../../utils/async-handler.js';
 import { ApiError } from '../../utils/api-error.js';
 import { ok } from '../../utils/api-response.js';
-import { audit } from '../audit/audit.service.js';
-import { Attendance } from '../attendance/attendance.model.js';
 import { utcDay } from '../attendance/attendance.policy.js';
+import { audit } from '../audit/audit.service.js';
 import { Employee } from '../employees/employee.model.js';
-import { LeaveLedgerEntry, LeaveRequest, LeaveType } from './leave.model.js';
-import { calculateRequestedDays, nextLeaveStatus, summarizeLedger } from './leave.policy.js';
+import { CompensatoryHolidayCredit, LeaveLedgerEntry, LeavePolicy, LeavePolicyHistory, LeaveRequest, LeaveType, WeeklyHolidaySchedule } from './leave.model.js';
+import { calculateRequestedDays, isConfirmedPermanent, nextLeaveStatus, splitDaysByLeaveYear, summarizeLedger } from './leave.policy.js';
+import { balanceFor, notifyLeave, processCompensatoryHoliday, reconcileApprovedLeave, reverseLeaveAttendance } from './leave.service.js';
 
 export const leaveRouter = Router(); leaveRouter.use(authenticate);
-const typeSchema = z.object({ name: z.string().min(2), code: z.string().min(2), description: z.string().optional(), active: z.boolean().optional(), paid: z.boolean(), requiresAttachment: z.boolean(), allowHalfDay: z.boolean(), defaultEntitlement: z.number().min(0) });
+const hrRoles = ['SUPER_ADMIN', 'HR_ADMIN', 'HR'];
+const typeSchema = z.object({ name: z.string().min(2).max(100), code: z.string().min(2).max(20), description: z.string().max(500).optional(), active: z.boolean().optional(), paid: z.boolean(), requiresAttachment: z.boolean(), defaultEntitlement: z.number().min(0), entitlementMode: z.enum(['ANNUAL', 'EARNED']).default('ANNUAL') });
 
-leaveRouter.get('/types', asyncHandler(async (_request, response) => ok(response, await LeaveType.find().sort({ name: 1 }))));
-leaveRouter.post('/types', requirePermission('leave:configure'), asyncHandler(async (request, response) => {
-  const item = await LeaveType.create(typeSchema.parse(request.body)); await audit(request, 'LEAVE_TYPE_CREATED', 'LeaveType', item._id, request.body); ok(response, item, undefined, 201);
-}));
-leaveRouter.patch('/types/:id', requirePermission('leave:configure'), asyncHandler(async (request, response) => {
-  const item = await LeaveType.findByIdAndUpdate(request.params.id, typeSchema.partial().parse(request.body), { new: true, runValidators: true });
-  if (!item) throw new ApiError(404, 'Leave type not found', 'NOT_FOUND'); await audit(request, 'LEAVE_TYPE_UPDATED', 'LeaveType', item._id, request.body); ok(response, item);
+leaveRouter.get('/types', asyncHandler(async (_request, response) => ok(response, await LeaveType.find().sort({ code: 1 }))));
+leaveRouter.post('/types', requirePermission('leave:configure'), asyncHandler(async (request, response) => { const input = typeSchema.parse(request.body); const item = await LeaveType.create({ ...input, allowHalfDay: false }); await audit(request, 'LEAVE_TYPE_CREATED', 'LeaveType', item._id, input); ok(response, item, undefined, 201); }));
+leaveRouter.patch('/types/:id', requirePermission('leave:configure'), asyncHandler(async (request, response) => { const input = typeSchema.partial().omit({ code: true }).parse(request.body); const item = await LeaveType.findByIdAndUpdate(request.params.id, { ...input, allowHalfDay: false, $inc: { version: 1 } }, { new: true, runValidators: true }); if (!item) throw new ApiError(404, 'Leave type not found', 'NOT_FOUND'); await audit(request, 'LEAVE_TYPE_UPDATED', 'LeaveType', item._id, input); ok(response, item); }));
+
+leaveRouter.get('/policy', asyncHandler(async (_request, response) => ok(response, await LeavePolicy.findOneAndUpdate({ key: 'DEFAULT' }, { $setOnInsert: { key: 'DEFAULT' } }, { upsert: true, new: true }))));
+leaveRouter.get('/policy/history', requirePermission('leave:configure'), asyncHandler(async (_request, response) => ok(response, await LeavePolicyHistory.find().sort({ version: -1 }).limit(100))));
+leaveRouter.put('/policy', requirePermission('leave:configure'), asyncHandler(async (request, response) => {
+  const input = z.object({ leaveDayCountingMode: z.enum(['UNCONFIGURED', 'CALENDAR_DAYS', 'SCHEDULED_DUTY_DAYS']), reservePendingBalance: z.boolean(), reason: z.string().min(5), probationAccrual: z.object({ enabled: z.boolean(), mode: z.enum(['UNCONFIGURED', 'DAILY', 'MONTHLY']), applicableLeaveCodes: z.array(z.enum(['CL', 'SL', 'AL'])), rounding: z.enum(['UNCONFIGURED', 'NONE', 'DOWN', 'NEAREST', 'UP']) }), weeklyCycle: z.object({ basis: z.enum(['UNCONFIGURED', 'SCHEDULED_DUTY_DAYS', 'ACTUAL_WORKED_DAYS']) }), chQualification: z.object({ enabled: z.boolean(), minimumWorkedMinutes: z.number().int().min(0).nullable(), requiresPriorAuthorization: z.boolean(), availableDuringProbation: z.boolean() }) }).parse(request.body);
+  if (input.probationAccrual.enabled && (input.probationAccrual.mode === 'UNCONFIGURED' || input.probationAccrual.rounding === 'UNCONFIGURED' || !input.probationAccrual.applicableLeaveCodes.length)) throw new ApiError(422, 'Probation accrual cannot be enabled until formula, leave types and rounding are confirmed', 'POLICY_INCOMPLETE');
+  if (input.chQualification.enabled && (input.chQualification.minimumWorkedMinutes === null || input.weeklyCycle.basis === 'UNCONFIGURED')) throw new ApiError(422, 'CH cannot be enabled until minimum work and weekly-cycle rules are confirmed', 'POLICY_INCOMPLETE');
+  const current: any = await LeavePolicy.findOneAndUpdate({ key: 'DEFAULT' }, { $setOnInsert: { key: 'DEFAULT' } }, { upsert: true, new: true }); const version = (current.version ?? 1) + 1;
+  await LeavePolicyHistory.create({ policy: current._id, version: current.version, snapshot: current.toObject(), changedBy: request.auth!.sub, reason: input.reason });
+  Object.assign(current, input, { version, updatedBy: request.auth!.sub }); await current.save(); await audit(request, 'LEAVE_POLICY_UPDATED', 'LeavePolicy', current._id, { version, reason: input.reason }); ok(response, current);
 }));
 
 leaveRouter.get('/balances', asyncHandler(async (request, response) => {
-  const employee = String(request.query.employee ?? request.auth!.employeeId ?? '');
-  if (!employee) throw new ApiError(422, 'Employee is required', 'VALIDATION_ERROR');
-  if (employee !== request.auth!.employeeId && !['SUPER_ADMIN', 'HR_ADMIN', 'HR'].includes(request.auth!.role)) throw new ApiError(403, 'Cannot view another employee balance', 'FORBIDDEN');
-  const year = Number(request.query.year) || new Date().getUTCFullYear();
-  const entries = await LeaveLedgerEntry.find({ employee, year }).populate('leaveType', 'name code');
-  const groups = new Map<string, any>();
-  for (const entry of entries) {
-    const key = entry.leaveType._id.toString(); const group = groups.get(key) ?? { leaveType: entry.leaveType, entries: [] };
-    group.entries.push({ type: entry.type, amount: entry.amount }); groups.set(key, group);
-  }
-  ok(response, [...groups.values()].map((group) => ({ leaveType: group.leaveType, ...summarizeLedger(group.entries) })));
+  const employee = String(request.query.employee ?? request.auth!.employeeId ?? ''); if (!employee) throw new ApiError(422, 'Employee is required', 'VALIDATION_ERROR');
+  if (employee !== request.auth!.employeeId && !hrRoles.includes(request.auth!.role)) { const assigned = request.auth!.role === 'MANAGER' && await Employee.exists({ _id: employee, 'employment.reviewer': request.auth!.employeeId }); if (!assigned) throw new ApiError(403, 'Cannot view another employee balance', 'FORBIDDEN'); }
+  const year = Number(request.query.year) || new Date().getUTCFullYear(); const types = await LeaveType.find({ active: true }).sort({ code: 1 }); const entries = await LeaveLedgerEntry.find({ employee, year });
+  ok(response, types.map((leaveType) => ({ leaveType, ...summarizeLedger(entries.filter((entry) => String(entry.leaveType) === String(leaveType._id))) })));
 }));
 
-leaveRouter.post('/balances/adjust', requirePermission('leave:configure'), asyncHandler(async (request, response) => {
-  const input = z.object({ employee: z.string(), leaveType: z.string(), year: z.number().int(), amount: z.number().refine((value) => value !== 0), reason: z.string().min(5) }).parse(request.body);
-  const entry = await LeaveLedgerEntry.create({ ...input, type: 'ADJUSTMENT', actor: request.auth!.sub });
-  await audit(request, 'LEAVE_BALANCE_ADJUSTED', 'LeaveLedgerEntry', entry._id, input); ok(response, entry, undefined, 201);
-}));
+leaveRouter.post('/balances/adjust', requirePermission('leave:balance:adjust'), asyncHandler(async (request, response) => { const input = z.object({ employee: z.string(), leaveType: z.string(), year: z.number().int(), amount: z.number().refine((value) => value !== 0), reason: z.string().min(5), operationId: z.string().min(8) }).parse(request.body); const entry = await LeaveLedgerEntry.findOneAndUpdate({ operationId: input.operationId }, { $setOnInsert: { ...input, type: 'MANUAL_ADJUSTMENT', actor: request.auth!.sub } }, { upsert: true, new: true }); await audit(request, 'LEAVE_BALANCE_ADJUSTED', 'LeaveLedgerEntry', entry._id, input); ok(response, entry, undefined, 201); }));
 
 leaveRouter.get('/requests', asyncHandler(async (request, response) => {
   const filter: any = {};
+  if (!hrRoles.includes(request.auth!.role) && !request.auth!.employeeId) throw new ApiError(403, 'No employee profile linked', 'PROFILE_NOT_LINKED');
   if (request.auth!.role === 'EMPLOYEE') filter.employee = request.auth!.employeeId;
-  if (request.auth!.role === 'MANAGER') {
-    const reports = await Employee.find({ 'employment.reportingManager': request.auth!.employeeId }).distinct('_id');
-    filter.employee = { $in: [request.auth!.employeeId, ...reports] };
-  }
-  if (request.query.status) filter.status = request.query.status;
-  ok(response, await LeaveRequest.find(filter).populate('employee', 'employeeId fullName').populate('leaveType', 'name code paid').sort({ createdAt: -1 }));
+  else if (request.auth!.role === 'MANAGER') filter.$or = [{ employee: request.auth!.employeeId }, { assignedHod: request.auth!.employeeId }];
+  else if (!hrRoles.includes(request.auth!.role)) throw new ApiError(403, 'Permission denied', 'FORBIDDEN');
+  if (request.query.status) filter.status = request.query.status; if (request.query.employee && hrRoles.includes(request.auth!.role)) filter.employee = request.query.employee;
+  ok(response, await LeaveRequest.find(filter).populate('employee', 'employeeId fullName employment.department').populate('assignedHod', 'employeeId fullName').populate('leaveType', 'name code paid').sort({ createdAt: -1 }));
 }));
 
-leaveRouter.post('/requests', asyncHandler(async (request, response) => {
+leaveRouter.post('/requests', requirePermission('leave:create:self'), asyncHandler(async (request, response) => {
   if (!request.auth!.employeeId) throw new ApiError(403, 'No employee profile linked', 'PROFILE_NOT_LINKED');
-  const input = z.object({ leaveType: z.string(), startDate: z.coerce.date(), endDate: z.coerce.date(), partialDay: z.enum(['NONE', 'FIRST_HALF', 'SECOND_HALF']).default('NONE'), reason: z.string().min(5).max(1000), submit: z.boolean().default(true) }).parse(request.body);
-  const type = await LeaveType.findOne({ _id: input.leaveType, active: true });
-  if (!type) throw new ApiError(422, 'Leave type is inactive or unavailable', 'INVALID_LEAVE_TYPE');
-  let requestedDays: number; try { requestedDays = calculateRequestedDays(input.startDate, input.endDate, input.partialDay); } catch (error) { throw new ApiError(422, (error as Error).message, 'INVALID_DATES'); }
-  if (input.partialDay !== 'NONE' && !type.allowHalfDay) throw new ApiError(422, 'This leave type does not allow a half day', 'HALF_DAY_NOT_ALLOWED');
-  if (type.requiresAttachment && !request.body.attachment) throw new ApiError(422, 'An attachment is required', 'ATTACHMENT_REQUIRED');
-  const overlap = await LeaveRequest.exists({ employee: request.auth!.employeeId, status: { $in: ['SUBMITTED', 'PENDING_MANAGER', 'PENDING_HR', 'APPROVED'] }, startDate: { $lte: input.endDate }, endDate: { $gte: input.startDate } });
-  if (overlap) throw new ApiError(409, 'This leave overlaps an existing request', 'LEAVE_OVERLAP');
-  const summary = summarizeLedger((await LeaveLedgerEntry.find({ employee: request.auth!.employeeId, leaveType: type._id, year: input.startDate.getUTCFullYear() })).map((entry) => ({ type: entry.type, amount: entry.amount })));
-  if (summary.remaining < requestedDays) throw new ApiError(409, 'Insufficient leave balance', 'INSUFFICIENT_BALANCE');
-  const employee = await Employee.findById(request.auth!.employeeId);
-  const status = input.submit ? (employee?.employment?.reportingManager ? 'PENDING_MANAGER' : 'PENDING_HR') : 'DRAFT';
-  const item = await LeaveRequest.create({ ...input, employee: request.auth!.employeeId, requestedDays, status, decisions: input.submit ? [{ actor: request.auth!.sub, role: request.auth!.role, action: 'SUBMIT' }] : [] });
-  if (input.submit) await LeaveLedgerEntry.create({ employee: item.employee, leaveType: item.leaveType, year: input.startDate.getUTCFullYear(), type: 'RESERVATION', amount: -requestedDays, reason: 'Reserved for submitted leave request', leaveRequest: item._id, actor: request.auth!.sub });
-  await audit(request, 'LEAVE_REQUEST_CREATED', 'LeaveRequest', item._id, { ...input, requestedDays, status }); ok(response, item, undefined, 201);
+  const input = z.object({ leaveType: z.string(), startDate: z.coerce.date(), endDate: z.coerce.date(), partialDay: z.literal('NONE').default('NONE'), reason: z.string().min(5).max(1000), remarks: z.string().max(500).optional(), submit: z.boolean().default(true) }).parse(request.body);
+  const policy: any = await LeavePolicy.findOne({ key: 'DEFAULT' }); if (!policy || policy.leaveDayCountingMode === 'UNCONFIGURED') throw new ApiError(422, 'Leave-day counting policy is not configured by HR', 'LEAVE_COUNTING_POLICY_REQUIRED');
+  const type: any = await LeaveType.findOne({ _id: input.leaveType, active: true }); if (!type) throw new ApiError(422, 'Leave type is inactive or unavailable', 'INVALID_LEAVE_TYPE');
+  const employee: any = await Employee.findById(request.auth!.employeeId); if (!employee || employee.employment.status !== 'ACTIVE') throw new ApiError(422, 'Only active employees may apply', 'EMPLOYEE_INACTIVE');
+  if (!isConfirmedPermanent(employee, input.startDate) && !(type.code === 'CH' && policy.chQualification.availableDuringProbation)) throw new ApiError(422, 'Leave balance is locked until permanent confirmation', 'LEAVE_NOT_ELIGIBLE');
+  if (!employee.employment.reviewer) throw new ApiError(422, 'An HOD must be assigned before leave can be submitted', 'HOD_NOT_ASSIGNED');
+  if (policy.leaveDayCountingMode === 'SCHEDULED_DUTY_DAYS') throw new ApiError(422, 'Scheduled-duty-day calculation requires the authoritative roster integration', 'ROSTER_CALCULATION_UNAVAILABLE');
+  let requestedDays: number; try { requestedDays = calculateRequestedDays(input.startDate, input.endDate); } catch (error) { throw new ApiError(422, (error as Error).message, 'INVALID_DATES'); }
+  const overlap = await LeaveRequest.exists({ employee: employee._id, status: { $in: ['SUBMITTED', 'PENDING_MANAGER', 'PENDING_HOD', 'PENDING_HR', 'APPROVED'] }, startDate: { $lte: input.endDate }, endDate: { $gte: input.startDate } }); if (overlap) throw new ApiError(409, 'This leave overlaps an existing request', 'LEAVE_OVERLAP');
+  const breakdown = splitDaysByLeaveYear(input.startDate, input.endDate); for (const part of breakdown) { const summary = await balanceFor(String(employee._id), String(type._id), part.year); if (summary.available < part.days) throw new ApiError(409, `Insufficient ${type.code} balance for ${part.year}`, 'INSUFFICIENT_BALANCE'); }
+  const status = input.submit ? 'PENDING_HOD' : 'DRAFT'; const item: any = await LeaveRequest.create({ ...input, employee: employee._id, requestedDays, dayBreakdown: breakdown, assignedHod: employee.employment.reviewer, status, decisions: input.submit ? [{ actor: request.auth!.sub, role: request.auth!.role, stage: 'EMPLOYEE', action: 'SUBMIT' }] : [] });
+  if (input.submit && policy.reservePendingBalance) for (const part of breakdown) await LeaveLedgerEntry.create({ employee: employee._id, leaveType: type._id, year: part.year, type: 'LEAVE_RESERVATION', amount: -part.days, reason: 'Reserved for submitted leave request', operationId: `LEAVE:${item.id}:RESERVE:${part.year}`, leaveRequest: item._id, actor: request.auth!.sub });
+  await notifyLeave({ type: 'LEAVE_SUBMITTED', requestId: item._id, employee: employee._id, recipientRole: 'HOD', message: `${employee.fullName} submitted leave`, suffix: 'SUBMITTED' }); await audit(request, 'LEAVE_SUBMITTED', 'LeaveRequest', item._id, { requestedDays, status }); ok(response, item, undefined, 201);
 }));
 
 leaveRouter.post('/requests/:id/decision', asyncHandler(async (request, response) => {
-  const input = z.object({ action: z.enum(['APPROVE', 'REJECT']), comment: z.string().max(500).optional() }).parse(request.body);
-  const item = await LeaveRequest.findById(request.params.id); if (!item) throw new ApiError(404, 'Leave request not found', 'NOT_FOUND');
-  if (request.auth!.role === 'MANAGER' && !await Employee.exists({ _id: item.employee, 'employment.reportingManager': request.auth!.employeeId })) throw new ApiError(403, 'This employee is not in your team', 'FORBIDDEN');
-  const previous = item.status;
-  try { item.status = nextLeaveStatus(item.status as any, request.auth!.role, input.action) as any; } catch (error) { throw new ApiError(409, (error as Error).message, 'INVALID_WORKFLOW_TRANSITION'); }
-  item.decisions.push({ actor: request.auth!.sub as any, role: request.auth!.role, action: input.action, comment: input.comment, timestamp: new Date() } as any); await item.save();
-  if (item.status === 'REJECTED') await LeaveLedgerEntry.create({ employee: item.employee, leaveType: item.leaveType, year: item.startDate.getUTCFullYear(), type: 'RELEASE', amount: item.requestedDays, reason: 'Reservation released after rejection', leaveRequest: item._id, actor: request.auth!.sub });
-  if (item.status === 'APPROVED') {
-    await LeaveLedgerEntry.create([{ employee: item.employee, leaveType: item.leaveType, year: item.startDate.getUTCFullYear(), type: 'RELEASE', amount: item.requestedDays, reason: 'Reservation converted to usage', leaveRequest: item._id, actor: request.auth!.sub }, { employee: item.employee, leaveType: item.leaveType, year: item.startDate.getUTCFullYear(), type: 'USAGE', amount: -item.requestedDays, reason: 'Approved leave used', leaveRequest: item._id, actor: request.auth!.sub }]);
-    for (let date = utcDay(item.startDate); date <= utcDay(item.endDate); date = new Date(date.getTime() + 86_400_000)) {
-      const attendance = await Attendance.findOne({ employee: item.employee, date });
-      if (!attendance) {
-        await Attendance.create({ employee: item.employee, date, status: 'LEAVE', source: 'SYSTEM', notes: `Approved leave ${item.id}` });
-      } else if (!attendance.checkIn && !attendance.checkOut) {
-        attendance.status = 'LEAVE';
-        attendance.source = 'SYSTEM';
-        attendance.notes = `Approved leave ${item.id}`;
-        await attendance.save();
-      } else {
-        attendance.notes = `${attendance.notes ? `${attendance.notes}; ` : ''}Approved leave conflict ${item.id}`;
-        await attendance.save();
-      }
-    }
-  }
-  await audit(request, `LEAVE_${input.action}`, 'LeaveRequest', item._id, { previous, status: item.status, comment: input.comment }); ok(response, item);
+  const input = z.object({ action: z.enum(['APPROVE', 'REJECT', 'RETURN']), comment: z.string().max(500).optional() }).parse(request.body); if (input.action !== 'APPROVE' && !input.comment?.trim()) throw new ApiError(422, 'A reason is required', 'COMMENT_REQUIRED');
+  const current: any = await LeaveRequest.findById(request.params.id); if (!current) throw new ApiError(404, 'Leave request not found', 'NOT_FOUND'); if (String(current.employee) === String(request.auth!.employeeId)) throw new ApiError(403, 'Self-approval is not allowed', 'SELF_APPROVAL');
+  if (!current.assignedHod || !current.dayBreakdown?.length) throw new ApiError(409, 'Historical requests require ledger and HOD reconciliation before processing', 'LEGACY_RECONCILIATION_REQUIRED');
+  const stage = ['PENDING_HOD', 'PENDING_MANAGER'].includes(current.status) ? 'HOD' : current.status === 'PENDING_HR' ? 'HR' : null; if (!stage) throw new ApiError(409, 'Request is not awaiting a decision', 'INVALID_WORKFLOW_TRANSITION');
+  if (stage === 'HOD' && (request.auth!.role !== 'MANAGER' || String(current.assignedHod) !== String(request.auth!.employeeId))) throw new ApiError(403, 'Only the assigned HOD can process this request', 'FORBIDDEN');
+  if (stage === 'HR' && !hrRoles.includes(request.auth!.role)) throw new ApiError(403, 'Only HR can perform final review', 'FORBIDDEN');
+  let next; try { next = nextLeaveStatus(current.status, stage, input.action); } catch (error) { throw new ApiError(409, (error as Error).message, 'INVALID_WORKFLOW_TRANSITION'); }
+  const item: any = await LeaveRequest.findOneAndUpdate({ _id: current._id, status: current.status }, { $set: { status: next }, $push: { decisions: { actor: request.auth!.sub, role: request.auth!.role, stage, action: input.action, comment: input.comment, timestamp: new Date() } } }, { new: true }); if (!item) throw new ApiError(409, 'Request was already processed', 'CONCURRENT_DECISION');
+  const breakdown = item.dayBreakdown?.length ? item.dayBreakdown : splitDaysByLeaveYear(item.startDate, item.endDate);
+  if (['REJECTED', 'RETURNED'].includes(item.status)) for (const part of breakdown) { const reserved = await LeaveLedgerEntry.exists({ leaveRequest: item._id, year: part.year, type: { $in: ['LEAVE_RESERVATION', 'RESERVATION'] } }); if (reserved) await LeaveLedgerEntry.findOneAndUpdate({ operationId: `LEAVE:${item.id}:RELEASE:${part.year}` }, { $setOnInsert: { employee: item.employee, leaveType: item.leaveType, year: part.year, type: 'RESERVATION_RELEASE', amount: part.days, reason: `Reservation released after ${item.status.toLowerCase()}`, operationId: `LEAVE:${item.id}:RELEASE:${part.year}`, leaveRequest: item._id, actor: request.auth!.sub } }, { upsert: true }); }
+  if (item.status === 'APPROVED') { for (const part of breakdown) { const reserved = await LeaveLedgerEntry.exists({ leaveRequest: item._id, year: part.year, type: { $in: ['LEAVE_RESERVATION', 'RESERVATION'] } }); if (reserved) await LeaveLedgerEntry.findOneAndUpdate({ operationId: `LEAVE:${item.id}:RELEASE:${part.year}` }, { $setOnInsert: { employee: item.employee, leaveType: item.leaveType, year: part.year, type: 'RESERVATION_RELEASE', amount: part.days, reason: 'Reservation converted to deduction', operationId: `LEAVE:${item.id}:RELEASE:${part.year}`, leaveRequest: item._id, actor: request.auth!.sub } }, { upsert: true }); await LeaveLedgerEntry.findOneAndUpdate({ operationId: `LEAVE:${item.id}:DEDUCT:${part.year}` }, { $setOnInsert: { employee: item.employee, leaveType: item.leaveType, year: part.year, type: 'LEAVE_DEDUCTION', amount: -part.days, reason: 'Final HR approved leave', operationId: `LEAVE:${item.id}:DEDUCT:${part.year}`, leaveRequest: item._id, actor: request.auth!.sub } }, { upsert: true }); } await reconcileApprovedLeave(item); item.attendanceReconciledAt = new Date(); await item.save(); }
+  await notifyLeave({ type: `LEAVE_${item.status}`, requestId: item._id, employee: item.employee, message: `Leave request is ${item.status}`, suffix: item.status }); await audit(request, `LEAVE_${input.action}_${stage}`, 'LeaveRequest', item._id, { previous: current.status, status: item.status, comment: input.comment }); ok(response, item);
 }));
+
+leaveRouter.post('/requests/:id/cancel', requirePermission('leave:cancel'), asyncHandler(async (request, response) => {
+  const reason = z.object({ reason: z.string().min(5).max(500) }).parse(request.body).reason; const current: any = await LeaveRequest.findById(request.params.id); if (!current) throw new ApiError(404, 'Leave request not found', 'NOT_FOUND'); if (['CANCELLED', 'REJECTED'].includes(current.status)) throw new ApiError(409, 'Leave cannot be cancelled in its current state', 'INVALID_WORKFLOW_TRANSITION');
+  if (!current.dayBreakdown?.length) throw new ApiError(409, 'Historical requests require ledger reconciliation before cancellation', 'LEGACY_RECONCILIATION_REQUIRED');
+  if (current.status === 'RETURNED') throw new ApiError(409, 'Returned leave has already released its reservation', 'INVALID_WORKFLOW_TRANSITION');
+  if (utcDay(current.startDate) <= utcDay(new Date())) throw new ApiError(422, 'Started or historical leave cancellation is blocked until HR confirms the policy', 'HISTORICAL_CANCELLATION_POLICY_REQUIRED');
+  const item: any = await LeaveRequest.findOneAndUpdate({ _id: current._id, status: current.status }, { $set: { status: 'CANCELLED', cancellation: { reason, cancelledAt: new Date(), cancelledBy: request.auth!.sub } }, $push: { decisions: { actor: request.auth!.sub, role: request.auth!.role, stage: 'HR', action: 'CANCEL', comment: reason, timestamp: new Date() } } }, { new: true }); if (!item) throw new ApiError(409, 'Request was already processed', 'CONCURRENT_DECISION');
+  const breakdown = item.dayBreakdown?.length ? item.dayBreakdown : splitDaysByLeaveYear(item.startDate, item.endDate); for (const part of breakdown) { const deducted = await LeaveLedgerEntry.exists({ operationId: `LEAVE:${item.id}:DEDUCT:${part.year}` }); const reserved = await LeaveLedgerEntry.exists({ leaveRequest: item._id, year: part.year, type: { $in: ['LEAVE_RESERVATION', 'RESERVATION'] } }); if (!deducted && !reserved) continue; const type = deducted ? 'LEAVE_REVERSAL' : 'RESERVATION_RELEASE'; const operationId = `LEAVE:${item.id}:CANCEL:${part.year}`; await LeaveLedgerEntry.findOneAndUpdate({ operationId }, { $setOnInsert: { employee: item.employee, leaveType: item.leaveType, year: part.year, type, amount: part.days, reason, operationId, leaveRequest: item._id, actor: request.auth!.sub } }, { upsert: true }); }
+  if (current.status === 'APPROVED') await reverseLeaveAttendance(item); await notifyLeave({ type: 'LEAVE_CANCELLED', requestId: item._id, employee: item.employee, message: `Leave cancelled by HR: ${reason}`, suffix: 'CANCELLED' }); await audit(request, 'LEAVE_CANCELLED', 'LeaveRequest', item._id, { previous: current.status, reason }); ok(response, item);
+}));
+
+leaveRouter.get('/weekly-holidays', asyncHandler(async (request, response) => { const filter: any = {}; if (!hrRoles.includes(request.auth!.role)) filter.employee = request.auth!.employeeId; if (request.query.employee && hrRoles.includes(request.auth!.role)) filter.employee = request.query.employee; if (request.query.from || request.query.to) filter.date = { ...(request.query.from ? { $gte: utcDay(String(request.query.from)) } : {}), ...(request.query.to ? { $lte: utcDay(String(request.query.to)) } : {}) }; ok(response, await WeeklyHolidaySchedule.find(filter).populate('employee', 'employeeId fullName').sort({ date: 1 })); }));
+leaveRouter.post('/weekly-holidays', requirePermission('leave:schedule:manage'), asyncHandler(async (request, response) => { const input = z.object({ employee: z.string(), date: z.coerce.date(), source: z.enum(['MANUAL', 'ROSTER', 'SYSTEM']).default('MANUAL'), authorizedDuty: z.boolean().default(false), reason: z.string().min(3).max(500) }).parse(request.body); const item = await WeeklyHolidaySchedule.findOneAndUpdate({ employee: input.employee, date: utcDay(input.date) }, { ...input, date: utcDay(input.date), active: true, createdBy: request.auth!.sub }, { upsert: true, new: true, runValidators: true }); await audit(request, 'WEEKLY_HOLIDAY_SCHEDULED', 'WeeklyHolidaySchedule', item._id, input); ok(response, item, undefined, 201); }));
+leaveRouter.post('/ch/process/:attendanceId', requirePermission('leave:schedule:manage'), asyncHandler(async (request, response) => { const item = await processCompensatoryHoliday(String(request.params.attendanceId), request.auth!.sub); if (!item) throw new ApiError(422, 'Attendance is not linked to a scheduled weekly holiday', 'NOT_WEEKLY_HOLIDAY'); await audit(request, 'CH_EVALUATED', 'CompensatoryHolidayCredit', item._id, { status: item.status }); ok(response, item); }));
+leaveRouter.get('/ch/credits', requirePermission('leave:report'), asyncHandler(async (_request, response) => ok(response, await CompensatoryHolidayCredit.find().populate('employee', 'employeeId fullName').sort({ holidayDate: -1 }))));
+leaveRouter.get('/reports/requests', requirePermission('leave:report'), asyncHandler(async (request, response) => {
+  const employeeFilter: any = {}; if (request.query.employee) employeeFilter._id = request.query.employee; if (request.query.department) employeeFilter['employment.department'] = request.query.department; if (request.query.businessUnit) employeeFilter['employment.businessUnit'] = request.query.businessUnit; if (request.query.branch) employeeFilter['employment.branch'] = request.query.branch; if (request.query.employeeType) employeeFilter['employment.workforceType'] = request.query.employeeType; if (request.query.employmentStatus) employeeFilter['employment.status'] = request.query.employmentStatus;
+  const employees = await Employee.find(employeeFilter).distinct('_id'); const filter: any = { employee: { $in: employees } }; if (request.query.status) filter.status = request.query.status; if (request.query.leaveType) filter.leaveType = request.query.leaveType; if (request.query.from || request.query.to) filter.startDate = { ...(request.query.from ? { $gte: utcDay(String(request.query.from)) } : {}), ...(request.query.to ? { $lte: utcDay(String(request.query.to)) } : {}) };
+  const rows: any[] = await LeaveRequest.find(filter).populate('employee', 'employeeId fullName employment.department employment.businessUnit employment.branch').populate('leaveType', 'code name').sort({ startDate: -1 }).limit(5000).lean();
+  if (request.query.format === 'csv') { const escape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`; const header = ['Employee ID', 'Employee', 'Leave Type', 'Start Date', 'End Date', 'Days', 'Status', 'Reason']; const lines = rows.map((row) => [row.employee?.employeeId, row.employee?.fullName, row.leaveType?.code, row.startDate?.toISOString().slice(0, 10), row.endDate?.toISOString().slice(0, 10), row.requestedDays, row.status, row.reason].map(escape).join(',')); response.type('text/csv').attachment('leave-report.csv').send([header.map(escape).join(','), ...lines].join('\n')); return; }
+  ok(response, { rows, totals: { requests: rows.length, days: rows.reduce((sum, row) => sum + row.requestedDays, 0), byStatus: Object.fromEntries([...new Set(rows.map((row) => row.status))].map((status) => [status, rows.filter((row) => row.status === status).length])) } });
+}));
+leaveRouter.get('/calendar', asyncHandler(async (request, response) => { const employee = String(request.query.employee ?? request.auth!.employeeId ?? ''); if (!employee) throw new ApiError(422, 'Employee is required', 'VALIDATION_ERROR'); if (employee !== request.auth!.employeeId && !hrRoles.includes(request.auth!.role)) { const assigned = request.auth!.role === 'MANAGER' && await Employee.exists({ _id: employee, 'employment.reviewer': request.auth!.employeeId }); if (!assigned) throw new ApiError(403, 'Permission denied', 'FORBIDDEN'); } const from = utcDay(String(request.query.from ?? new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)))); const to = utcDay(String(request.query.to ?? new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 0)))); const [requests, holidays, ch] = await Promise.all([LeaveRequest.find({ employee, status: { $in: ['PENDING_HOD', 'PENDING_HR', 'APPROVED'] }, startDate: { $lte: to }, endDate: { $gte: from } }).populate('leaveType', 'code name'), WeeklyHolidaySchedule.find({ employee, date: { $gte: from, $lte: to }, active: true }), CompensatoryHolidayCredit.find({ employee, holidayDate: { $gte: from, $lte: to } })]); ok(response, { requests, holidays, compensatoryCredits: ch }); }));

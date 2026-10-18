@@ -3,6 +3,7 @@ import { Attendance } from '../attendance/attendance.model.js';
 import { calculateAttendance, utcDay } from '../attendance/attendance.policy.js';
 import { BiometricPunch, EmployeeBiometricMapping } from './biometric.model.js';
 import type { DevicePunch } from './biometric.provider.js';
+import { processCompensatoryHoliday } from '../leave/leave.service.js';
 
 export function punchKey(deviceId: string, punch: DevicePunch): string {
   return createHash('sha256').update([deviceId, punch.deviceUserId, punch.timestamp.toISOString(), punch.punchId ?? '', punch.punchType ?? ''].join('|')).digest('hex');
@@ -23,7 +24,7 @@ export async function ingestPunches(deviceId: string, punches: DevicePunch[], so
   return results;
 }
 
-export async function processPendingPunches(): Promise<number> {
+export async function processPendingPunches(actorId: string): Promise<number> {
   const pending = await BiometricPunch.find({ processingStatus: 'PENDING', employee: { $ne: null } }).sort({ punchTimestamp: 1 });
   const groups = new Map<string, typeof pending>();
   for (const punch of pending) {
@@ -35,11 +36,12 @@ export async function processPendingPunches(): Promise<number> {
     const checkIn = all[0]?.punchTimestamp; const checkOut = all.length > 1 ? all.at(-1)?.punchTimestamp : undefined;
     const existing = await Attendance.findOne({ employee: punches[0]!.employee, date: utcDay(punches[0]!.punchTimestamp) });
     const calculations = calculateAttendance({ checkIn, checkOut, scheduledStart: existing?.scheduledStart ?? undefined, scheduledEnd: existing?.scheduledEnd ?? undefined });
-    await Attendance.findOneAndUpdate(
+    const attendance = await Attendance.findOneAndUpdate(
       { employee: punches[0]!.employee, date: utcDay(punches[0]!.punchTimestamp) },
       { $set: { checkIn, checkOut, source: 'BIOMETRIC', ...calculations }, $addToSet: { rawPunches: { $each: all.map((item) => item._id) } } },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
+    if (attendance) await processCompensatoryHoliday(String(attendance._id), actorId);
     await BiometricPunch.updateMany({ _id: { $in: punches.map((item) => item._id) } }, { processingStatus: 'PROCESSED' });
   }
   return pending.length;

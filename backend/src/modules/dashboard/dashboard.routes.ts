@@ -21,7 +21,7 @@ dashboardRouter.get('/', asyncHandler(async (request, response) => {
     Employee.countDocuments(employeeFilter), Employee.countDocuments({ ...employeeFilter, 'employment.status': 'ACTIVE' }),
     Attendance.countDocuments({ ...attendanceFilter, status: 'PRESENT' }), Attendance.countDocuments({ ...attendanceFilter, status: 'ABSENT' }),
     Attendance.countDocuments({ ...attendanceFilter, status: 'LEAVE' }), Attendance.countDocuments({ ...attendanceFilter, lateMinutes: { $gt: 0 } }),
-    LeaveRequest.countDocuments({ employee: { $in: employeeIds }, status: { $in: ['PENDING_MANAGER', 'PENDING_HR'] } }),
+    LeaveRequest.countDocuments({ employee: { $in: employeeIds }, status: { $in: ['PENDING_MANAGER', 'PENDING_HOD', 'PENDING_HR'] } }),
     AttendanceCorrection.countDocuments({ employee: { $in: employeeIds }, status: { $in: ['PENDING_MANAGER', 'PENDING_HR'] } }),
     request.auth!.employeeId ? Attendance.findOne({ employee: request.auth!.employeeId, date: today }) : null,
     ['SUPER_ADMIN', 'HR_ADMIN', 'HR'].includes(request.auth!.role) ? Notification.countDocuments({ recipientRole: 'HR', status: { $in: ['DUE_SOON', 'DUE_TODAY', 'OVERDUE'] }, type: 'PROBATION_EVALUATION_DUE' }) : 0

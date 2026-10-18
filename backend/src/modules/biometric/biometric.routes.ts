@@ -24,5 +24,5 @@ biometricRouter.post('/simulator/import', asyncHandler(async (request, response)
   if (env.NODE_ENV === 'production' || !env.ENABLE_BIOMETRIC_SIMULATOR) throw new ApiError(404, 'Simulator is disabled', 'NOT_FOUND');
   const input = z.object({ device: z.string(), punches: z.array(z.object({ deviceUserId: z.string(), timestamp: z.coerce.date(), punchType: z.string().optional(), punchId: z.string().optional() })).min(1).max(1000) }).parse(request.body);
   const punches = await ingestPunches(input.device, input.punches.map((item) => ({ ...item, raw: { simulated: true, ...item } })), 'SIMULATOR');
-  const processed = await processPendingPunches(); await audit(request, 'BIOMETRIC_SIMULATION_IMPORTED', 'BiometricDevice', input.device, { received: input.punches.length, processed }); ok(response, { received: input.punches.length, unique: punches.length, processed }, undefined, 201);
+  const processed = await processPendingPunches(request.auth!.sub); await audit(request, 'BIOMETRIC_SIMULATION_IMPORTED', 'BiometricDevice', input.device, { received: input.punches.length, processed }); ok(response, { received: input.punches.length, unique: punches.length, processed }, undefined, 201);
 }));
