@@ -9,6 +9,8 @@ coverage/
 .DS_Store
 Thumbs.db
 frontend/tsconfig.tsbuildinfo
+tools/.dashboard-qa/
+artifacts/dashboard/
 
 # Contains real legacy employee and bank-account data; never publish it.
 9.BWPR Salary of September 2026.xlsx
