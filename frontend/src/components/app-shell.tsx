@@ -13,6 +13,7 @@ const nav = [
   { label: 'Organization', href: '/people/organization', icon: Building2, roles: ['SUPER_ADMIN','HR_ADMIN','HR'] },
   { label: 'Attendance', href: '/attendance', icon: CalendarCheck, roles: ['SUPER_ADMIN','HR_ADMIN','HR','MANAGER','EMPLOYEE'] },
   { label: 'Leave', href: '/leave', icon: ClipboardCheck, roles: ['SUPER_ADMIN','HR_ADMIN','HR','MANAGER','EMPLOYEE'] },
+  { label: 'Leave Management', href: '/leave-management', icon: ClipboardCheck, roles: ['SUPER_ADMIN','HR_ADMIN','HR','MANAGER','EMPLOYEE'] },
   { label: 'Approvals', href: '/approvals', icon: ShieldCheck, roles: ['SUPER_ADMIN','HR_ADMIN','HR','MANAGER'] },
   { label: 'Administration', href: '/administration', icon: ShieldCheck, roles: ['SUPER_ADMIN','HR_ADMIN','HR'] }
 ] as const;

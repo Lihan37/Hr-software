@@ -51,6 +51,7 @@ const navigation: readonly NavGroup[] = [
       { label: 'My profile', href: '/profile', icon: UserCircle, roles: everyRole, aliases: ['employee profile'] },
       { label: 'My attendance', href: '/attendance', icon: CalendarCheck, roles: everyRole, aliases: ['clock', 'punch'] },
       { label: 'My leave', href: '/leave', icon: ClipboardCheck, roles: everyRole, aliases: ['time off', 'balance'] },
+      { label: 'Leave Management', href: '/leave-management', icon: ClipboardCheck, roles: everyRole, aliases: ['team leave balance', 'employee balances', 'HOD leave'] },
     ],
   },
   {

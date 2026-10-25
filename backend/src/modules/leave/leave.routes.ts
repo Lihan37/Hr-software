@@ -10,6 +10,7 @@ import { Employee } from '../employees/employee.model.js';
 import { CompensatoryHolidayCredit, LeaveLedgerEntry, LeavePolicy, LeavePolicyHistory, LeaveRequest, LeaveType, WeeklyHolidaySchedule } from './leave.model.js';
 import { calculateRequestedDays, isConfirmedPermanent, nextLeaveStatus, splitDaysByLeaveYear, summarizeLedger } from './leave.policy.js';
 import { balanceFor, notifyLeave, processCompensatoryHoliday, reconcileApprovedLeave, reverseLeaveAttendance } from './leave.service.js';
+import { balanceFilters, leaveBalanceScope, listLeaveBalances } from './leave-balances.service.js';
 
 export const leaveRouter = Router(); leaveRouter.use(authenticate);
 const hrRoles = ['SUPER_ADMIN', 'HR_ADMIN', 'HR'];
@@ -30,10 +31,16 @@ leaveRouter.put('/policy', requirePermission('leave:configure'), asyncHandler(as
   Object.assign(current, input, { version, updatedBy: request.auth!.sub }); await current.save(); await audit(request, 'LEAVE_POLICY_UPDATED', 'LeavePolicy', current._id, { version, reason: input.reason }); ok(response, current);
 }));
 
+leaveRouter.get('/balances/overview', asyncHandler(async (request, response) => {
+  ok(response, await listLeaveBalances(request.auth!, balanceFilters.parse(request.query)));
+}));
+
 leaveRouter.get('/balances', asyncHandler(async (request, response) => {
   const employee = String(request.query.employee ?? request.auth!.employeeId ?? ''); if (!employee) throw new ApiError(422, 'Employee is required', 'VALIDATION_ERROR');
-  if (employee !== request.auth!.employeeId && !hrRoles.includes(request.auth!.role)) { const assigned = request.auth!.role === 'MANAGER' && await Employee.exists({ _id: employee, 'employment.reviewer': request.auth!.employeeId }); if (!assigned) throw new ApiError(403, 'Cannot view another employee balance', 'FORBIDDEN'); }
-  const year = Number(request.query.year) || new Date().getUTCFullYear(); const types = await LeaveType.find({ active: true }).sort({ code: 1 }); const entries = await LeaveLedgerEntry.find({ employee, year });
+  const { year } = balanceFilters.parse({ employee, year: request.query.year });
+  const allowed = await Employee.exists({ $and: [leaveBalanceScope(request.auth!), { _id: employee }] });
+  if (!allowed) throw new ApiError(403, 'Cannot view this employee balance', 'FORBIDDEN');
+  const types = await LeaveType.find({ active: true }).sort({ code: 1 }); const entries = await LeaveLedgerEntry.find({ employee, year });
   ok(response, types.map((leaveType) => ({ leaveType, ...summarizeLedger(entries.filter((entry) => String(entry.leaveType) === String(leaveType._id))) })));
 }));
 
