@@ -44,7 +44,43 @@ leaveRouter.get('/balances', asyncHandler(async (request, response) => {
   ok(response, types.map((leaveType) => ({ leaveType, ...summarizeLedger(entries.filter((entry) => String(entry.leaveType) === String(leaveType._id))) })));
 }));
 
-leaveRouter.post('/balances/adjust', requirePermission('leave:balance:adjust'), asyncHandler(async (request, response) => { const input = z.object({ employee: z.string(), leaveType: z.string(), year: z.number().int(), amount: z.number().refine((value) => value !== 0), reason: z.string().min(5), operationId: z.string().min(8) }).parse(request.body); const entry = await LeaveLedgerEntry.findOneAndUpdate({ operationId: input.operationId }, { $setOnInsert: { ...input, type: 'MANUAL_ADJUSTMENT', actor: request.auth!.sub } }, { upsert: true, new: true }); await audit(request, 'LEAVE_BALANCE_ADJUSTED', 'LeaveLedgerEntry', entry._id, input); ok(response, entry, undefined, 201); }));
+leaveRouter.get('/balances/adjustments', requirePermission('leave:balance:adjust'), asyncHandler(async (request, response) => {
+  const input = balanceFilters.extend({ employee: z.string().regex(/^[a-f\d]{24}$/i) }).parse(request.query);
+  const filter = { employee: input.employee, year: input.year, type: 'MANUAL_ADJUSTMENT' };
+  const total = await LeaveLedgerEntry.countDocuments(filter);
+  const page = Math.min(input.page, Math.max(1, Math.ceil(total / 20)));
+  const rows = await LeaveLedgerEntry.find(filter).select('leaveType amount reason actor createdAt year')
+    .populate('leaveType', 'code name').populate('actor', 'email').sort({ createdAt: -1, _id: -1 }).skip((page - 1) * 20).limit(20).lean();
+  ok(response, { rows, total, page, pageSize: 20 });
+}));
+
+leaveRouter.post('/balances/adjust', requirePermission('leave:balance:adjust'), asyncHandler(async (request, response) => {
+  const id = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid record ID').transform((value) => value.toLowerCase());
+  const input = z.object({ employee: id, leaveType: id, year: z.number().int().min(1900).max(2200),
+    amount: z.number().finite().min(-10000).max(10000).refine((value) => value !== 0 && Math.abs(value * 100 - Math.round(value * 100)) < 1e-8, 'Enter a non-zero number with at most two decimal places'),
+    reason: z.string().trim().min(5).max(500), operationId: z.string().min(8).max(120).regex(/^[\w:-]+$/),
+  }).parse(request.body);
+  const matches = (entry: { employee: unknown; leaveType: unknown; year: number; amount: number; reason: string; actor: unknown; type: string }) =>
+    String(entry.employee) === input.employee && String(entry.leaveType) === input.leaveType && entry.year === input.year && entry.amount === input.amount && entry.reason === input.reason && String(entry.actor) === request.auth!.sub && entry.type === 'MANUAL_ADJUSTMENT';
+  const existing = await LeaveLedgerEntry.findOne({ operationId: input.operationId });
+  if (existing) {
+    if (!matches(existing)) throw new ApiError(409, 'This adjustment reference was already used for a different change', 'ADJUSTMENT_CONFLICT');
+    ok(response, existing); return;
+  }
+  if (!await Employee.exists({ _id: input.employee })) throw new ApiError(404, 'Employee not found', 'NOT_FOUND');
+  if (!await LeaveType.exists({ _id: input.leaveType, active: true })) throw new ApiError(422, 'Select an active leave type', 'INVALID_LEAVE_TYPE');
+  // Append-only delta: never rewrite grants, reservations, deductions or employee history.
+  let entry;
+  try {
+    entry = await LeaveLedgerEntry.findOneAndUpdate({ operationId: input.operationId }, { $setOnInsert: { ...input, type: 'MANUAL_ADJUSTMENT', actor: request.auth!.sub } }, { upsert: true, new: true, runValidators: true });
+  } catch (error) {
+    if ((error as { code?: number }).code !== 11000) throw error;
+    entry = await LeaveLedgerEntry.findOne({ operationId: input.operationId });
+  }
+  if (!entry || !matches(entry)) throw new ApiError(409, 'Adjustment reference conflict. Refresh and try again.', 'ADJUSTMENT_CONFLICT');
+  await audit(request, 'LEAVE_BALANCE_ADJUSTED', 'LeaveLedgerEntry', entry._id, input);
+  ok(response, entry, undefined, 201);
+}));
 
 leaveRouter.get('/requests', asyncHandler(async (request, response) => {
   const filter: any = {};

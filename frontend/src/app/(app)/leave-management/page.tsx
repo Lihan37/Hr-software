@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { PageHeader } from '@/components/page-header';
 import { useAuth } from '@/features/auth/auth-provider';
 import { api } from '@/lib/api';
+import { LeaveAdjustmentDialog } from '@/features/leave/leave-adjustment-dialog';
 
 interface Balance {
   leaveType: string; entitled: number; accrued: number; adjustments: number;
@@ -26,6 +27,9 @@ export default function LeaveManagementPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [adjustments, setAdjustments] = useState(false);
+  const [selectedEmployee, setSelectedEmployee] = useState<Overview['rows'][number] | null>(null);
+  const canAdjust = !!user && ['SUPER_ADMIN', 'HR_ADMIN', 'HR'].includes(user.role);
 
   useEffect(() => {
     if (!user) return;
@@ -46,6 +50,8 @@ export default function LeaveManagementPage() {
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   return <>
     <PageHeader title="Leave Management" description={scopeDescription} action={<Link href="/leave" className="btn-primary">My leave requests</Link>} />
+    {canAdjust && <div className="mb-4 flex flex-wrap gap-2"><button className={adjustments ? 'btn-secondary' : 'btn-primary'} onClick={() => setAdjustments(false)}>Leave balances</button><button className={adjustments ? 'btn-primary' : 'btn-secondary'} onClick={() => setAdjustments(true)}>Leave adjustments</button></div>}
+    {canAdjust && adjustments && <p className="mb-4 text-sm text-slate-600">Search for an employee below, then choose Adjust leave to add or deduct CL, AL or other leave days with a mandatory reason.</p>}
     <form className="card mb-5 flex flex-wrap items-end gap-3 p-4" onSubmit={(event) => { event.preventDefault(); setPage(1); setQuery(search.trim()); setRefresh((value) => value + 1); }}>
       <label className="min-w-0 flex-1"><span className="mb-1 block text-sm font-semibold">Employee name or ID</span><input className="field" value={search} onChange={(event) => setSearch(event.target.value)} maxLength={100} placeholder="Search permitted employees" /></label>
       <label><span className="mb-1 block text-sm font-semibold">Leave year</span><select aria-label="Leave year" className="field" value={year} onChange={(event) => { setYear(Number(event.target.value)); setPage(1); }}>
@@ -60,7 +66,7 @@ export default function LeaveManagementPage() {
       <div className="border-b border-slate-200 p-4"><h2 className="font-bold">{data.scope === 'ALL' ? 'All employee balances' : data.scope === 'TEAM' ? 'Team leave balances' : 'My leave balances'} — {data.year}</h2><p className="mt-1 text-sm text-slate-500">{data.total} employee{data.total === 1 ? '' : 's'} in your permitted scope</p></div>
       {!data.rows.length ? <p className="p-8 text-center text-slate-500">No employees found in your permitted scope.</p> : !data.leaveTypes.length ? <p className="p-8 text-center text-slate-500">No active leave types configured.</p> : <div className="table-wrap"><table>
         <caption className="sr-only">Employee leave balances for {data.year}, in days</caption>
-        <thead><tr><th>Employee</th><th>Department</th><th>Leave type</th><th>Entitled</th><th>Accrued / Earned</th><th>Adjustments</th><th>Used</th><th>Pending</th><th>Ledger balance</th></tr></thead>
+        <thead><tr><th>Employee</th><th>Department</th><th>Leave type</th><th>Entitled</th><th>Accrued / Earned</th><th>Adjustments</th><th>Used</th><th>Pending</th><th>Ledger balance</th>{canAdjust && adjustments && <th>Action</th>}</tr></thead>
         <tbody>{data.rows.flatMap((employee) => employee.balances.map((balance, index) => {
           const type = data.leaveTypes.find((item) => item._id === balance.leaveType);
           return <tr key={`${employee._id}:${balance.leaveType}`}>
@@ -68,6 +74,7 @@ export default function LeaveManagementPage() {
             <td>{index === 0 ? employee.department?.name ?? 'Not assigned' : ''}</td>
             <td><span className="font-semibold">{type?.code}</span><span className="block text-xs text-slate-500">{type?.name}</span></td>
             <td>{balance.entitled}</td><td>{balance.accrued}</td><td>{balance.adjustments}</td><td>{balance.used}</td><td>{balance.pending}</td><td className="font-bold text-sky-800">{balance.available}</td>
+            {canAdjust && adjustments && <td>{index === 0 && <button className="btn-secondary" onClick={() => setSelectedEmployee(employee)}>Adjust leave</button>}</td>}
           </tr>;
         }))}</tbody>
       </table></div>}
@@ -75,5 +82,6 @@ export default function LeaveManagementPage() {
         <span>Page {data.page} of {pages}</span><div className="flex gap-2"><button className="btn-secondary disabled:opacity-50" disabled={data.page <= 1} onClick={() => setPage(data.page - 1)}>Previous</button><button className="btn-secondary disabled:opacity-50" disabled={data.page >= pages} onClick={() => setPage(data.page + 1)}>Next</button></div>
       </div>
     </section>}
+    {canAdjust && selectedEmployee && <LeaveAdjustmentDialog employee={selectedEmployee} year={year} onClose={() => setSelectedEmployee(null)} onSaved={() => setRefresh((value) => value + 1)} />}
   </>;
 }
