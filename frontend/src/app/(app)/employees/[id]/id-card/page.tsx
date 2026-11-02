@@ -10,6 +10,7 @@ import { useAuth } from '@/features/auth/auth-provider';
 import { IdCardRenderer, type IdCardEmployee } from '@/features/id-card/id-card-renderer';
 import { employeeIdCardTemplate } from '@/features/id-card/id-card-template';
 import { api } from '@/lib/api';
+import { EmployeePhotoUpload } from '@/features/employees/employee-photo-upload';
 
 const allowedRoles = ['SUPER_ADMIN', 'HR_ADMIN', 'HR'];
 
@@ -64,6 +65,7 @@ export default function EmployeeIdCardPage() {
     {printError && <div role="alert" className="mb-4 rounded bg-red-50 p-4 text-red-700">{printError}</div>}
     {templateReady && <p className="mb-4 text-sm text-slate-600">Official Runway front/back artwork. Save as PDF opens the browser print dialog: choose Save as PDF, use 100% / Actual size, and disable headers and footers. Each side is a separate card-size page; align duplex orientation with your printer.</p>}
     {templateReady && !employee.profilePhoto?.url && <p role="alert" className="mb-4 rounded bg-amber-50 p-4 text-amber-900">Employee photo is missing. Add a profile photo before printing or saving the card.</p>}
+    <EmployeePhotoUpload key={employee._id} employeeId={employee._id} currentPhoto={employee.profilePhoto} onUploaded={(photo) => { setEmployee((current) => current?._id === employee._id ? { ...current, profilePhoto: photo } : current); setPrintError(''); }} />
     {!templateReady && <section className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-5 text-amber-950"><h2 className="font-bold">Official ID card template required</h2><p className="mt-2 text-sm leading-6">The generation workflow is ready, but preview and PDF/print output remain disabled until the official front/back artwork, exact card dimensions, typography and field positions are supplied. No substitute design has been created.</p></section>}
     <section className="card mb-6 p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-bold">Live Employee Master data</h2><p className="mt-1 text-sm text-slate-500">The card is regenerated from the latest employee record every time this page opens.</p></div><div className="flex flex-wrap gap-2"><button type="button" className="btn-secondary inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50" disabled={!templateReady || printing || !employee.profilePhoto?.url} onClick={printCard}><Download size={16}/>Save as PDF</button><button type="button" className="btn-primary inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50" disabled={!templateReady || printing || !employee.profilePhoto?.url} onClick={printCard}><Printer size={16}/>{printing ? 'Preparing…' : 'Print'}</button></div></div>

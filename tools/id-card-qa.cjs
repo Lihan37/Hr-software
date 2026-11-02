@@ -11,16 +11,28 @@ async function run() {
     const page = await browser.newPage();
     const failures = [];
     let role = 'HR_ADMIN'; let missing = false; let broken = false;
+    let uploadFails = false;
+    const uploadedRequests = [];
     let fullName = 'Ayesha Rahman';
     page.on('pageerror', (error) => failures.push(error.message));
     await page.route('**/api/v1/**', async (route) => {
       const url = new URL(route.request().url());
-      const respond = (data) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
+      const respond = (data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(status === 200 ? { success: true, data } : { success: false, error: { message: 'Unable to store the photo. Please retry.' } }) });
       if (url.pathname.endsWith('/auth/me')) return respond({ _id: 'qa-user', role, employee: { _id: id, fullName: 'QA User', employeeId: 'EMP-000001' } });
       if (url.pathname.includes('/lifecycle/notifications')) return respond([]);
-      if (url.pathname.endsWith('/id-card-data')) {
+      if (url.pathname.endsWith('/photo')) {
+        assert.ok(['HR_ADMIN', 'HR', 'SUPER_ADMIN'].includes(role));
+        assert.ok(route.request().headers()['content-type'].startsWith('multipart/form-data; boundary='));
+        assert.ok(route.request().postDataBuffer().includes(Buffer.from('name="photo"')));
+        uploadedRequests.push(url.pathname);
+        if (uploadFails) return respond(null, 502);
+        missing = false; broken = false;
+        return respond({ url: photo, storageKey: 'synthetic-photo', provider: 'cloudinary' });
+      }
+      if (url.pathname.endsWith('/profile-data')) return respond({ family: [], education: [], experience: [], identityRestricted: true, bankRestricted: true });
+      if (url.pathname.endsWith('/id-card-data') || url.pathname === `/api/v1/employees/${id}`) {
         assert.ok(['HR_ADMIN', 'HR', 'SUPER_ADMIN'].includes(role), 'Unauthorized UI requested card data');
-        return respond({ _id: id, employeeId: 'EMP-000001', fullName, profilePhoto: missing ? undefined : { url: broken ? 'data:image/png;base64,broken' : photo }, personal: { bloodGroup: 'B+' }, employment: { joiningDate: '2024-01-15', department: { name: 'Front Office' }, designation: { name: 'Guest Service Associate' } } });
+        return respond({ _id: id, employeeId: 'EMP-000001', fullName, profilePhoto: missing ? undefined : { url: broken ? 'data:image/png;base64,broken' : photo }, personal: { bloodGroup: 'B+' }, employment: { status: 'ACTIVE', employmentType: 'PERMANENT', joiningDate: '2024-01-15', department: { name: 'Front Office' }, designation: { name: 'Guest Service Associate' } } });
       }
       failures.push(`Unexpected API: ${url.pathname}`); return respond(null);
     });
@@ -63,13 +75,52 @@ async function run() {
     missing = true; await page.reload();
     await page.getByText(/Employee photo is missing/).waitFor();
     assert.ok(await page.getByRole('button', { name: 'Save as PDF', exact: true }).isDisabled());
+    const uploader = page.getByRole('region', { name: 'Employee photo upload', exact: true });
+    const photoInput = uploader.getByLabel('Choose employee photo', { exact: true });
+    await photoInput.setInputFiles({ name: 'not-image.txt', mimeType: 'text/plain', buffer: Buffer.from('not an image') });
+    await uploader.getByText('Choose a WebP image.', { exact: true }).waitFor();
+    for (const mimeType of ['image/png', 'image/jpeg']) {
+      await photoInput.setInputFiles({ name: 'unsupported-photo', mimeType, buffer: Buffer.from('not webp') });
+      await uploader.getByText('Choose a WebP image.', { exact: true }).waitFor();
+    }
+    await photoInput.setInputFiles({ name: 'large.webp', mimeType: 'image/webp', buffer: Buffer.alloc(1000 * 1000 + 1) });
+    await uploader.getByText('Photo must be 1000 KB or smaller.', { exact: true }).waitFor();
+    assert.equal(uploadedRequests.length, 0);
+    const webpDataUrl = await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 8; canvas.height = 8; return canvas.toDataURL('image/webp'); });
+    const webp = Buffer.from(webpDataUrl.split(',')[1], 'base64');
+    await photoInput.setInputFiles({ name: 'portrait.webp', mimeType: 'image/webp', buffer: webp });
+    await page.waitForFunction(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent === 'Upload photo'); return button && !button.disabled; });
+    uploadFails = true;
+    await uploader.getByRole('button', { name: 'Upload photo', exact: true }).click();
+    await uploader.getByText('Unable to store the photo. Please retry.', { exact: true }).waitFor();
+    assert.ok(await page.getByRole('button', { name: 'Save as PDF', exact: true }).isDisabled());
+    uploadFails = false;
+    await uploader.getByRole('button', { name: 'Upload photo', exact: true }).click();
+    await uploader.getByText('Photo saved to Employee Profile. The ID card now uses this photo.', { exact: true }).waitFor();
+    assert.ok(await page.getByRole('button', { name: 'Save as PDF', exact: true }).isEnabled());
+    assert.equal(await page.locator('[data-card-photo-missing]').count(), 0);
+    await photoInput.setInputFiles({ name: 'replacement.webp', mimeType: 'image/webp', buffer: webp });
+    await page.waitForFunction(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent === 'Replace photo'); return button && !button.disabled; });
+    await uploader.getByRole('button', { name: 'Replace photo', exact: true }).click();
+    await uploader.getByText('Photo saved to Employee Profile. The ID card now uses this photo.', { exact: true }).waitFor();
+    await page.reload();
+    await page.locator('[data-card-layout="preview"]').getByText(fullName, { exact: true }).waitFor();
+    assert.ok(await page.getByRole('button', { name: 'Save as PDF', exact: true }).isEnabled());
+    await page.goto(`http://localhost:3100/employees/${id}`);
+    await uploader.waitFor();
+    await photoInput.setInputFiles({ name: 'profile-photo.webp', mimeType: 'image/webp', buffer: webp });
+    await page.waitForFunction(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent === 'Replace photo'); return button && !button.disabled; });
+    await uploader.getByRole('button', { name: 'Replace photo', exact: true }).click();
+    await uploader.getByText('Photo saved to Employee Profile. The ID card now uses this photo.', { exact: true }).waitFor();
+    await page.getByRole('link', { name: 'Generate ID Card', exact: true }).click();
+    await page.locator('[data-card-layout="preview"]').getByText(fullName, { exact: true }).waitFor();
     for (const value of ['MANAGER', 'EMPLOYEE']) {
       role = value; await page.reload();
       await page.getByRole('heading', { name: 'Access denied', exact: true }).waitFor();
       assert.equal(await page.locator('.id-card-side').count(), 0);
     }
     assert.deepEqual(failures, []);
-    await fs.writeFile(path.join(out, 'id-card-results.json'), JSON.stringify({ passed: true, scenarios: ['responsive front/back', 'photo crop', 'field fit', 'PDF/print isolation', 'updated employee', 'missing/broken photo', 'oversize field blocked', 'HR authorization'], failures }, null, 2));
+    await fs.writeFile(path.join(out, 'id-card-results.json'), JSON.stringify({ passed: true, scenarios: ['responsive front/back', 'photo crop', 'field fit', 'PDF/print isolation', 'updated employee', 'missing/broken photo', 'photo upload/replace and reload', 'invalid/oversized upload', 'upload failure/retry', 'oversize field blocked', 'HR authorization'], failures }, null, 2));
     console.log('Preview, print/PDF, live profile regeneration, missing photo and role restrictions: OK');
   } finally { await browser.close(); }
 }

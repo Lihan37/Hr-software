@@ -14,6 +14,12 @@ Photo coordinates follow the front's circular opening. Dynamic text is confined 
 
 Only SUPER_ADMIN, HR_ADMIN and HR can view/generate card data, enforced by the existing backend `employee:id-card:generate` permission and UI checks. Generation/data access continues to be audited. Every page open loads the employee again; edited profile information is used on regeneration. There is no batch interface yet, but the shared data/renderer/template remain reusable.
 
+## Uploading the employee photo
+
+HR/Admin can upload or replace the photo directly on the ID card page or the Employee Profile. Choose a WebP image up to 1000 KB (1,000,000 bytes), review the local preview, then select Upload photo / Replace photo. JPEG/PNG uploads are rejected. Existing stored photos and the supplied PNG card backgrounds are not altered. The existing authorized `/employees/:id/photo` multipart endpoint uploads to configured Cloudinary storage and persists `Employee.profilePhoto`. The ID card preview and PDF availability update immediately, without reloading. This is a shared employee photo, not a separate card-only image.
+
+Client checks reject unsupported, oversized or unreadable images. Backend permission, file size, MIME allowlist and file-signature checks apply independently, with readable error messages. Storage upload failure leaves the existing profile photo intact. A 30-second client timeout prevents a stuck upload spinner; if it occurs, refresh the profile to verify whether the server completed the upload before retrying. `backend/tests/employee-photo.test.ts` covers permission, validation, persistence, audit, replacement and storage-failure behavior; synthetic browser QA covers multipart upload, immediate card updates, replacement, reload, rejection and retry.
+
 ## Verification
 
 `node tools/id-card-qa.cjs` with the local frontend on port 3100 uses synthetic API fixtures and the existing ignored Playwright installation. It tests 1440/768/390/320px layouts, both sides, circular photo cropping, text fit, oversize text refusal, updated records, missing/broken photos, PDF/print isolation and non-HR denial. Test PDF/screenshots are written only under `tools/.dashboard-qa/`. PDF inspection confirms two pages, front-only dynamic text, no app UI and card-sized media boxes. Backend API authorization/source-data behavior is tested in `backend/tests/id-card.test.ts`.

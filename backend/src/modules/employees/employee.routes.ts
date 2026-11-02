@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { authenticate, requirePermission } from '../../middleware/auth.js';
@@ -14,10 +14,18 @@ import { EmployeeBankAccount, EmployeeContact, EmployeeEducation, EmployeeExperi
 import { employmentTypes, TraineeType } from '../employee-lifecycle/lifecycle.model.js';
 import { addUtcMonths, getHrPolicy, lifecycleEvent, nextTraineeId } from '../employee-lifecycle/lifecycle.service.js';
 import { Location } from '../organization/organization.model.js';
+import { employeePhotoMaxBytes, employeePhotoMimeTypes, isEmployeePhoto } from './employee-photo.policy.js';
 
 export const employeeRouter = Router();
 employeeRouter.use(authenticate);
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_r, file, cb) => cb(null, file.mimetype.startsWith('image/')) });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: employeePhotoMaxBytes }, fileFilter: (_r, file, cb) => {
+  if (!employeePhotoMimeTypes.includes(file.mimetype)) return cb(new ApiError(415, 'Choose a WebP image', 'INVALID_PHOTO_TYPE'));
+  cb(null, true);
+} });
+const uploadPhoto: RequestHandler = (request, response, next) => upload.single('photo')(request, response, (error: unknown) => {
+  if (error instanceof multer.MulterError) return next(new ApiError(error.code === 'LIMIT_FILE_SIZE' ? 413 : 422, error.code === 'LIMIT_FILE_SIZE' ? 'Photo must be 1000 KB or smaller' : 'Send one employee photo in the photo field', 'INVALID_PHOTO_UPLOAD'));
+  next(error);
+});
 
 const optionalDate = z.coerce.date().optional();
 const addressInput = z.object({ houseRoadVillage: z.string().max(200).optional(), postOffice: z.string().max(100).optional(), postCode: z.string().max(20).optional(), district: z.string().max(100).optional(), upazila: z.string().max(100).optional(), line1: z.string().max(200).optional(), line2: z.string().max(200).optional(), country: z.string().max(100).optional() });
@@ -204,12 +212,13 @@ employeeRouter.patch('/:id', requirePermission('employee:write'), asyncHandler(a
   ok(response, employee);
 }));
 
-employeeRouter.post('/:id/photo', requirePermission('employee:write'), upload.single('photo'), asyncHandler(async (request, response) => {
+employeeRouter.post('/:id/photo', requirePermission('employee:write'), uploadPhoto, asyncHandler(async (request, response) => {
   if (!request.file) throw new ApiError(422, 'An image file is required', 'VALIDATION_ERROR');
+  if (!isEmployeePhoto(request.file.buffer, request.file.mimetype)) throw new ApiError(422, 'The file does not match a valid WebP image', 'INVALID_PHOTO');
   const employee = await Employee.findById(request.params.id);
   if (!employee) throw new ApiError(404, 'Employee not found', 'NOT_FOUND');
   const previous = employee.profilePhoto?.storageKey;
-  const stored = await storageService.upload(request.file.buffer, { folder: `hrms/employees/${employee.employeeId}`, mimeType: request.file.mimetype });
+  const stored = await storageService.upload(request.file.buffer, { folder: `hrms/employees/${employee.employeeId}`, mimeType: request.file.mimetype }).catch(() => { throw new ApiError(502, 'Unable to store the photo. Please retry or ask an administrator to check media storage.', 'PHOTO_UPLOAD_FAILED'); });
   employee.profilePhoto = stored as any; await employee.save();
   if (previous) await storageService.delete(previous).catch(() => undefined);
   await audit(request, 'EMPLOYEE_PHOTO_UPDATED', 'Employee', employee._id, { provider: stored.provider, storageKey: stored.storageKey });
