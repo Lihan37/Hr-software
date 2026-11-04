@@ -65,10 +65,13 @@ async function run() {
     const out = path.join(__dirname, '.dashboard-qa');
     await page.locator('[data-card-layout="preview"]').screenshot({ path: path.join(out, 'id-card-preview.png') });
     await page.pdf({ path: path.join(out, 'id-card-output.pdf'), preferCSSPageSize: true, printBackground: true, displayHeaderFooter: false });
+    await page.pdf({ path: path.join(out, 'id-card-output-no-background.pdf'), preferCSSPageSize: true, printBackground: false, displayHeaderFooter: false });
     await page.emulateMedia({ media: 'print' });
     assert.equal(await page.locator('[data-card-layout="preview"]').isVisible(), false);
     assert.equal(await page.locator('#employee-id-card-print-root').isVisible(), true);
-    assert.ok(await page.locator('#employee-id-card-print-root .id-card-side').first().evaluate((card) => getComputedStyle(card).clipPath.startsWith('inset(')), 'Print must preserve rounded card clipping');
+    assert.equal(await page.locator('#employee-id-card-print-root [data-card-shape="square"]').count(), 2);
+    assert.equal(await page.locator('#employee-id-card-print-root [data-print-corner]').count(), 8);
+    assert.ok(await page.locator('#employee-id-card-print-root .id-card-side').first().evaluate((card) => getComputedStyle(card).clipPath === 'none' && getComputedStyle(card).borderRadius === '0px'), 'PDF/print must be square/full-bleed, not rounded over white paper');
     await page.emulateMedia({ media: 'screen' });
     fullName = 'Ayesha Rahman Chowdhury'; await page.reload();
     await page.locator('[data-card-layout="preview"]').getByText(fullName, { exact: true }).waitFor();

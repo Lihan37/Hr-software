@@ -8,7 +8,7 @@ The supplied `Asset 2@4x.png` is the front and `Asset 1@4x.png` is the back, cop
 
 Photo coordinates follow the front's circular opening. Dynamic text is confined to the unused white area above the supplied signature; its positions, colors, sizes and minimum font sizes are configurable in the shared template. The artwork contains no font/text-position specification for employee fields, so Arial is used for the dynamic overlay only. All existing lettering remains baked into the original artwork. Text wraps and shrinks only within its assigned box; excessive text blocks export with a review message rather than silently printing clipped data. Photos use a centered `object-fit: cover` circular crop, never stretching. Missing/broken photos must be corrected before export.
 
-Both card sides have a configurable 4 mm corner radius matching the artwork's rounded outline. The entire card (including the rectangular white image background) is clipped in preview and print. PDF media boxes/paper remain rectangular; the physical card still requires round-corner trimming. Source PNGs are not edited.
+Both card sides have a configurable 4 mm corner radius matching the artwork's rounded outline in the on-screen preview. PDF/Print deliberately uses square/full-bleed output: small vector corner fills extend the original adjacent colors over the baked-in white rounded wedges. Front corners use the original maroon (#991b3f); the back's top corners stay white to match its white body, and its bottom corners match the original maroon footer without extending that footer upward. The rest of the design, field coordinates, physical size and source PNGs are unchanged. The square PDF can be trimmed with a round-corner cutter if needed.
 
 ## PDF and print
 
@@ -25,3 +25,5 @@ Client checks reject unsupported, oversized or unreadable images. Backend permis
 ## Verification
 
 `node tools/id-card-qa.cjs` with the local frontend on port 3100 uses synthetic API fixtures and the existing ignored Playwright installation. It tests 1440/768/390/320px layouts, both sides, circular photo cropping, text fit, oversize text refusal, updated records, missing/broken photos, PDF/print isolation and non-HR denial. Test PDF/screenshots are written only under `tools/.dashboard-qa/`. PDF inspection confirms two pages, front-only dynamic text, no app UI and card-sized media boxes. Backend API authorization/source-data behavior is tested in `backend/tests/id-card.test.ts`.
+
+Run `python tools/id-card-pdf-qa.py` after browser QA to render both exported PDFs (background graphics enabled/disabled) with the ignored QA-only PyMuPDF installation. This asserts actual corner pixel colors, two-page card dimensions and the back footer boundary, rather than treating rounded HTML/CSS alone as proof that the PDF has no white wedges.
