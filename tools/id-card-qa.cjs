@@ -47,6 +47,15 @@ async function run() {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `Page overflows at ${width}`);
       const imageStyle = await preview.locator('img[alt="Ayesha Rahman"]').evaluate((img) => ({ fit: getComputedStyle(img).objectFit, radius: getComputedStyle(img).borderRadius }));
       assert.equal(imageStyle.fit, 'cover'); assert.equal(imageStyle.radius, '50%');
+      for (const side of await preview.locator('.id-card-side').all()) {
+        await side.scrollIntoViewIfNeeded();
+        const corners = await side.evaluate((card) => {
+          const rect = card.getBoundingClientRect();
+          return { radius: parseFloat(getComputedStyle(card).borderTopLeftRadius), clip: getComputedStyle(card).clipPath,
+            outside: [[rect.left + 1, rect.top + 1], [rect.right - 1, rect.top + 1], [rect.left + 1, rect.bottom - 1], [rect.right - 1, rect.bottom - 1]].every(([x, y]) => !card.contains(document.elementFromPoint(x, y))) };
+        });
+        assert.ok(corners.radius > 10 && corners.clip.startsWith('inset(') && corners.outside, 'All four corners must clip the rectangular white artwork background');
+      }
       console.log(`ID card layout ${width}px: OK`);
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -59,6 +68,7 @@ async function run() {
     await page.emulateMedia({ media: 'print' });
     assert.equal(await page.locator('[data-card-layout="preview"]').isVisible(), false);
     assert.equal(await page.locator('#employee-id-card-print-root').isVisible(), true);
+    assert.ok(await page.locator('#employee-id-card-print-root .id-card-side').first().evaluate((card) => getComputedStyle(card).clipPath.startsWith('inset(')), 'Print must preserve rounded card clipping');
     await page.emulateMedia({ media: 'screen' });
     fullName = 'Ayesha Rahman Chowdhury'; await page.reload();
     await page.locator('[data-card-layout="preview"]').getByText(fullName, { exact: true }).waitFor();

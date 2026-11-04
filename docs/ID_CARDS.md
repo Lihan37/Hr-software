@@ -8,6 +8,8 @@ The supplied `Asset 2@4x.png` is the front and `Asset 1@4x.png` is the back, cop
 
 Photo coordinates follow the front's circular opening. Dynamic text is confined to the unused white area above the supplied signature; its positions, colors, sizes and minimum font sizes are configurable in the shared template. The artwork contains no font/text-position specification for employee fields, so Arial is used for the dynamic overlay only. All existing lettering remains baked into the original artwork. Text wraps and shrinks only within its assigned box; excessive text blocks export with a review message rather than silently printing clipped data. Photos use a centered `object-fit: cover` circular crop, never stretching. Missing/broken photos must be corrected before export.
 
+Both card sides have a configurable 4 mm corner radius matching the artwork's rounded outline. The entire card (including the rectangular white image background) is clipped in preview and print. PDF media boxes/paper remain rectangular; the physical card still requires round-corner trimming. Source PNGs are not edited.
+
 ## PDF and print
 
 **Save as PDF** uses the browser print dialog (not a server PDF download). Choose Save as PDF, disable headers/footers and use Actual size / 100%. The print-only layout creates one card-size page per side, excludes the app shell, and waits for image decoding/fonts before printing. Browser/printer rounding may slightly quantize physical dimensions; use a physical proof before a print run. Front/back duplex alignment and any additional bleed/crop marks must be agreed with the printer; the supplied artwork itself is not altered or padded with invented bleed.

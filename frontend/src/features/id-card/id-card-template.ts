@@ -34,6 +34,7 @@ export type IdCardTemplate = {
   status: 'AWAITING_TEMPLATE' | 'READY';
   widthMm: number | null;
   heightMm: number | null;
+  cornerRadiusMm?: number;
   sides: IdCardSide[];
 };
 
@@ -44,6 +45,7 @@ export const employeeIdCardTemplate: IdCardTemplate = {
   status: 'READY',
   widthMm: 153.39 * 25.4 / 72,
   heightMm: 244.139 * 25.4 / 72,
+  cornerRadiusMm: 4,
   sides: [
     {
       side: 'front', backgroundUrl: '/id-card/runway/front.png',

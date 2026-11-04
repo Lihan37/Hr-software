@@ -59,8 +59,9 @@ function CardPhoto({ url, name, style }: { url?: string; name: string; style: CS
 
 export function IdCardRenderer({ employee, template, printLayout = false }: { employee: IdCardEmployee; template: IdCardTemplate; printLayout?: boolean }) {
   if (template.status !== 'READY' || !template.widthMm || !template.heightMm) return null;
+  const radius = `${Math.min(Math.max(0, template.cornerRadiusMm ?? 0), template.widthMm / 2, template.heightMm / 2)}mm`;
   return <div data-card-layout={printLayout ? 'print' : 'preview'} className={printLayout ? '' : 'flex flex-wrap justify-center gap-6'}>
-    {template.sides.map((side) => <section key={side.side} aria-label={`${side.side} of ID card`} className="id-card-side relative shrink-0 overflow-hidden bg-white shadow-lg print:shadow-none" style={{ width: `${template.widthMm}mm`, height: `${template.heightMm}mm` }}>
+    {template.sides.map((side) => <section key={side.side} aria-label={`${side.side} of ID card`} className="id-card-side relative shrink-0 overflow-hidden bg-white shadow-lg print:shadow-none" style={{ width: `${template.widthMm}mm`, height: `${template.heightMm}mm`, borderRadius: radius, clipPath: `inset(0 round ${radius})` }}>
       <img src={side.backgroundUrl} alt="" className="absolute inset-0 size-full object-contain" aria-hidden="true"/>
       {side.fields.map((field) => {
         const style: CSSProperties = {
