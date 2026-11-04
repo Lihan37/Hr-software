@@ -28,7 +28,6 @@ export type IdCardSide = {
   side: 'front' | 'back';
   backgroundUrl: string;
   fields: IdCardFieldPlacement[];
-  printCornerFill?: { topColor: string; bottomColor: string; footerStartPercent: number };
 };
 
 export type IdCardTemplate = {
@@ -50,7 +49,6 @@ export const employeeIdCardTemplate: IdCardTemplate = {
   sides: [
     {
       side: 'front', backgroundUrl: '/id-card/runway/front.png',
-      printCornerFill: { topColor: '#991b3f', bottomColor: '#991b3f', footerStartPercent: 926 / 979 * 100 },
       fields: [
         { key: 'photo', xPercent: 27.92, yPercent: 25.64, widthPercent: 44.64, heightPercent: 28.09, borderRadiusPercent: 50, objectPosition: 'center' },
         { key: 'fullName', xPercent: 7, yPercent: 55.2, widthPercent: 86, heightPercent: 8, fontSizePt: 10, minFontSizePt: 6.5, fontWeight: 700, color: '#991b3f', textAlign: 'center' },
@@ -61,6 +59,6 @@ export const employeeIdCardTemplate: IdCardTemplate = {
         { key: 'joiningDate', label: 'Joining date: ', xPercent: 7, yPercent: 79.1, widthPercent: 86, heightPercent: 3, fontSizePt: 6.5, minFontSizePt: 6, textAlign: 'center' },
       ],
     },
-    { side: 'back', backgroundUrl: '/id-card/runway/back.png', fields: [], printCornerFill: { topColor: '#ffffff', bottomColor: '#991b3f', footerStartPercent: 947 / 979 * 100 } },
+    { side: 'back', backgroundUrl: '/id-card/runway/back.png', fields: [] },
   ],
 };
