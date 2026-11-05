@@ -102,7 +102,7 @@ export default function DashboardPage() {
     }).format(new Date(value));
   return (
     <div className="space-y-5">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+      <header className="page-header flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
             <span className="size-1.5 rounded-full bg-[#11837a]" />
@@ -144,7 +144,7 @@ export default function DashboardPage() {
       </header>
       <section
         aria-label="Dashboard filters"
-        className="rounded-xl border border-slate-200 bg-white p-4"
+        className="card p-4"
       >
         <button type="button" className="flex w-full items-center justify-between gap-3 text-sm font-semibold text-slate-600 md:hidden" aria-expanded={filtersExpanded} aria-controls="workforce-filters" onClick={() => setFiltersExpanded(value => !value)}><span>Filters · {filters.date || data?.meta.date || localDate()}</span><span>{filtersExpanded ? 'Hide' : 'Show'}</span></button>
         <div id="workforce-filters" className={`${filtersExpanded ? 'grid mt-4 md:mt-0' : 'hidden md:grid'} gap-3 min-[500px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6`}>

@@ -39,7 +39,7 @@ export function Panel({
 }) {
   return (
     <section
-      className={`min-w-0 rounded-xl border border-slate-200 bg-white ${className}`}
+      className={`card min-w-0 ${className}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 p-5">
         <div className="min-w-0">
@@ -95,13 +95,13 @@ export function KpiCard({
   return (
     <Link
       href={href}
-      className="group min-w-0 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-sky-300 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-sky-300"
+      className="kpi-card card group min-w-0 p-5 transition focus-visible:ring-2 focus-visible:ring-indigo-300"
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-xs font-semibold leading-5 text-slate-600">
           {label}
         </p>
-        <Icon size={17} className="shrink-0 text-[#176b9c]" />
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-500"><Icon size={17} /></span>
       </div>
       <div className="mt-3 text-3xl font-bold tracking-tight text-[#11263d]">
         {value}

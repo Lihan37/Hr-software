@@ -432,7 +432,8 @@ async function run() {
   console.log(JSON.stringify({ results, failures }, null, 2));
   if (failures.length) process.exitCode = 1;
 }
-run().catch((error) => {
+module.exports = { fixture };
+if (require.main === module) run().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

@@ -4,4 +4,4 @@ const colors: Record<string, string> = {
   LEAVE: 'bg-sky-50 text-sky-700', PENDING_MANAGER: 'bg-amber-50 text-amber-700', PENDING_HR: 'bg-amber-50 text-amber-700',
   MISSING_PUNCH: 'bg-orange-50 text-orange-700', WEEKLY_OFF: 'bg-slate-100 text-slate-600', PUBLIC_HOLIDAY: 'bg-violet-50 text-violet-700'
 };
-export function StatusBadge({ value }: { value: string }) { return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${colors[value] ?? 'bg-slate-100 text-slate-700'}`}>{value.replaceAll('_', ' ')}</span>; }
+export function StatusBadge({ value }: { value: string }) { return <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide ring-1 ring-inset ring-current/10 ${colors[value] ?? 'bg-slate-100 text-slate-700'}`}><span aria-hidden="true" className="size-1.5 rounded-full bg-current opacity-65"/>{value.replaceAll('_', ' ')}</span>; }
